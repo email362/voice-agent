@@ -128,7 +128,17 @@ h2 {
   background: #f9fafb;
 }
 
+.assistant-panel {
+  margin-top: 16px;
+}
+
 #transcript {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+#assistantReply {
   margin-bottom: 0;
   white-space: pre-wrap;
   line-height: 1.6;

@@ -2,12 +2,14 @@ const recordButton = document.querySelector("#recordButton");
 const statusDot = document.querySelector("#statusDot");
 const statusText = document.querySelector("#statusText");
 const transcript = document.querySelector("#transcript");
+const assistantReply = document.querySelector("#assistantReply");
 const metadata = document.querySelector("#metadata");
 
 let mediaRecorder = null;
 let mediaStream = null;
 let audioChunks = [];
 let isRecording = false;
+let assistantStatusTimer = null;
 
 function setStatus(message, state = "ready") {
   statusText.textContent = message;
@@ -17,6 +19,11 @@ function setStatus(message, state = "ready") {
 function setTranscript(text, isPlaceholder = false) {
   transcript.textContent = text;
   transcript.classList.toggle("transcript-placeholder", isPlaceholder);
+}
+
+function setAssistantReply(text, isPlaceholder = false) {
+  assistantReply.textContent = text;
+  assistantReply.classList.toggle("transcript-placeholder", isPlaceholder);
 }
 
 function getSupportedMimeType() {
@@ -33,6 +40,7 @@ function getSupportedMimeType() {
 async function startRecording() {
   metadata.textContent = "";
   setTranscript("Listening...", true);
+  setAssistantReply("Waiting for transcript...", true);
   setStatus("Recording", "recording");
   recordButton.textContent = "Stop Recording";
   recordButton.classList.add("is-recording");
@@ -80,6 +88,9 @@ async function uploadRecording() {
 
   formData.append("file", audioBlob, `recording.${extension}`);
   setStatus("Transcribing with Whisper", "working");
+  assistantStatusTimer = window.setTimeout(() => {
+    setStatus("Asking assistant", "working");
+  }, 1500);
 
   try {
     const response = await fetch("/api/transcribe", {
@@ -93,19 +104,27 @@ async function uploadRecording() {
     }
 
     setTranscript(payload.text || "(No speech detected)");
+    setAssistantReply(payload.reply || "(No assistant reply)");
     metadata.textContent = [
       payload.language ? `Language: ${payload.language}` : null,
       `Audio: ${payload.duration_seconds}s`,
-      `Processed: ${payload.processing_seconds}s`,
+      `Transcribed: ${payload.processing_seconds}s`,
+      payload.llm_model ? `LLM: ${payload.llm_model}` : null,
+      payload.llm_processing_seconds
+        ? `LLM processed: ${payload.llm_processing_seconds}s`
+        : null,
     ]
       .filter(Boolean)
       .join(" | ");
     setStatus("Ready", "ready");
   } catch (error) {
     setTranscript(error.message, false);
+    setAssistantReply("Assistant reply unavailable.", true);
     metadata.textContent = "";
     setStatus("Error", "error");
   } finally {
+    window.clearTimeout(assistantStatusTimer);
+    assistantStatusTimer = null;
     recordButton.disabled = false;
     recordButton.textContent = "Start Recording";
     recordButton.classList.remove("is-recording");
@@ -125,6 +144,7 @@ recordButton.addEventListener("click", async () => {
     await startRecording();
   } catch (error) {
     setTranscript(error.message, false);
+    setAssistantReply("Assistant reply unavailable.", true);
     setStatus("Microphone unavailable", "error");
     recordButton.textContent = "Start Recording";
     recordButton.classList.remove("is-recording");

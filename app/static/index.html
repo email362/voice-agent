@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Whisper STT POC</title>
+    <title>Voice Agent POC</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -11,7 +11,7 @@
       <section class="panel">
         <div>
           <p class="eyebrow">Voice Agent POC</p>
-          <h1>Whisper Speech-to-Text</h1>
+          <h1>Whisper + NanoGPT Voice Agent</h1>
         </div>
 
         <button id="recordButton" class="record-button" type="button">
@@ -27,6 +27,13 @@
           <h2>Transcript</h2>
           <p id="transcript" class="transcript-placeholder">
             Record a short sample to see Whisper output here.
+          </p>
+        </section>
+
+        <section class="transcript-panel assistant-panel" aria-live="polite">
+          <h2>Assistant Reply</h2>
+          <p id="assistantReply" class="transcript-placeholder">
+            The assistant reply will appear here after transcription.
           </p>
         </section>
 
