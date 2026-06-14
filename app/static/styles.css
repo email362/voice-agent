@@ -87,6 +87,48 @@ h2 {
   background: #aa2828;
 }
 
+.tts-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.tts-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #526170;
+  font-weight: 700;
+}
+
+.tts-toggle input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.secondary-button {
+  min-height: 40px;
+  border: 1px solid #c8d1dc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17202a;
+  cursor: pointer;
+  font-weight: 700;
+  padding: 0 14px;
+}
+
+.secondary-button:hover {
+  background: #f4f6f8;
+}
+
+.secondary-button:disabled {
+  color: #91a0b3;
+  cursor: not-allowed;
+}
+
 .status-row {
   display: flex;
   align-items: center;

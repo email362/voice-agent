@@ -4,12 +4,18 @@ const statusText = document.querySelector("#statusText");
 const transcript = document.querySelector("#transcript");
 const assistantReply = document.querySelector("#assistantReply");
 const metadata = document.querySelector("#metadata");
+const speakReplies = document.querySelector("#speakReplies");
+const stopSpeakingButton = document.querySelector("#stopSpeakingButton");
 
 let mediaRecorder = null;
 let mediaStream = null;
 let audioChunks = [];
 let isRecording = false;
 let assistantStatusTimer = null;
+let currentUtterance = null;
+
+const ttsSupported =
+  "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
 
 function setStatus(message, state = "ready") {
   statusText.textContent = message;
@@ -26,6 +32,70 @@ function setAssistantReply(text, isPlaceholder = false) {
   assistantReply.classList.toggle("transcript-placeholder", isPlaceholder);
 }
 
+function setSpeaking(isSpeaking) {
+  stopSpeakingButton.hidden = !isSpeaking;
+  stopSpeakingButton.disabled = !isSpeaking;
+}
+
+function cancelSpeech() {
+  if (!ttsSupported) {
+    return;
+  }
+
+  currentUtterance = null;
+  window.speechSynthesis.cancel();
+  setSpeaking(false);
+}
+
+function speakReply(text) {
+  if (!ttsSupported || !speakReplies.checked || !text) {
+    return;
+  }
+
+  cancelSpeech();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  utterance.lang = "en-US";
+  currentUtterance = utterance;
+
+  utterance.addEventListener("end", () => {
+    if (currentUtterance !== utterance) {
+      return;
+    }
+
+    currentUtterance = null;
+    setSpeaking(false);
+    setStatus("Ready", "ready");
+  });
+
+  utterance.addEventListener("error", () => {
+    if (currentUtterance !== utterance) {
+      return;
+    }
+
+    currentUtterance = null;
+    setSpeaking(false);
+    setStatus("Ready", "ready");
+  });
+
+  setSpeaking(true);
+  setStatus("Speaking reply", "working");
+
+  try {
+    window.speechSynthesis.speak(utterance);
+  } catch (error) {
+    if (currentUtterance !== utterance) {
+      return;
+    }
+
+    currentUtterance = null;
+    setSpeaking(false);
+    setStatus("Ready", "ready");
+  }
+}
+
 function getSupportedMimeType() {
   const options = [
     "audio/webm;codecs=opus",
@@ -38,6 +108,7 @@ function getSupportedMimeType() {
 }
 
 async function startRecording() {
+  cancelSpeech();
   metadata.textContent = "";
   setTranscript("Listening...", true);
   setAssistantReply("Waiting for transcript...", true);
@@ -104,7 +175,8 @@ async function uploadRecording() {
     }
 
     setTranscript(payload.text || "(No speech detected)");
-    setAssistantReply(payload.reply || "(No assistant reply)");
+    const replyText = payload.reply || "(No assistant reply)";
+    setAssistantReply(replyText, !payload.reply);
     metadata.textContent = [
       payload.language ? `Language: ${payload.language}` : null,
       `Audio: ${payload.duration_seconds}s`,
@@ -117,6 +189,7 @@ async function uploadRecording() {
       .filter(Boolean)
       .join(" | ");
     setStatus("Ready", "ready");
+    speakReply(payload.reply);
   } catch (error) {
     setTranscript(error.message, false);
     setAssistantReply("Assistant reply unavailable.", true);
@@ -151,7 +224,25 @@ recordButton.addEventListener("click", async () => {
   }
 });
 
+stopSpeakingButton.addEventListener("click", () => {
+  cancelSpeech();
+  setStatus("Ready", "ready");
+});
+
+speakReplies.addEventListener("change", () => {
+  if (!speakReplies.checked) {
+    cancelSpeech();
+    setStatus("Ready", "ready");
+  }
+});
+
 if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
   recordButton.disabled = true;
   setStatus("Browser recording is not supported", "error");
+}
+
+if (!ttsSupported) {
+  speakReplies.checked = false;
+  speakReplies.disabled = true;
+  stopSpeakingButton.disabled = true;
 }
