@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Whisper STT POC</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <div>
+          <p class="eyebrow">Voice Agent POC</p>
+          <h1>Whisper Speech-to-Text</h1>
+        </div>
+
+        <button id="recordButton" class="record-button" type="button">
+          Start Recording
+        </button>
+
+        <div class="status-row">
+          <span id="statusDot" class="status-dot"></span>
+          <span id="statusText">Ready</span>
+        </div>
+
+        <section class="transcript-panel" aria-live="polite">
+          <h2>Transcript</h2>
+          <p id="transcript" class="transcript-placeholder">
+            Record a short sample to see Whisper output here.
+          </p>
+        </section>
+
+        <p id="metadata" class="metadata"></p>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
