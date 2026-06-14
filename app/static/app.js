@@ -12,10 +12,14 @@ let mediaStream = null;
 let audioChunks = [];
 let isRecording = false;
 let assistantStatusTimer = null;
-let currentUtterance = null;
+let ttsAbortController = null;
+let currentAudio = null;
+let currentAudioUrl = null;
+let ttsRequestId = 0;
 
-const ttsSupported =
-  "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const ttsPlaybackSupported =
+  "Audio" in window;
+let ttsConfigured = ttsPlaybackSupported;
 
 function setStatus(message, state = "ready") {
   statusText.textContent = message;
@@ -37,62 +41,153 @@ function setSpeaking(isSpeaking) {
   stopSpeakingButton.disabled = !isSpeaking;
 }
 
-function cancelSpeech() {
-  if (!ttsSupported) {
-    return;
+function cleanupCurrentAudio() {
+  if (currentAudio) {
+    currentAudio.pause();
+    currentAudio.removeAttribute("src");
+    currentAudio.load();
+    currentAudio = null;
   }
 
-  currentUtterance = null;
-  window.speechSynthesis.cancel();
+  if (currentAudioUrl) {
+    window.URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
+}
+
+function stopCurrentSpeech({ abortRequest = true } = {}) {
+  ttsRequestId += 1;
+
+  if (abortRequest && ttsAbortController) {
+    ttsAbortController.abort();
+  }
+
+  ttsAbortController = null;
+  cleanupCurrentAudio();
   setSpeaking(false);
 }
 
-function speakReply(text) {
-  if (!ttsSupported || !speakReplies.checked || !text) {
+function finishSpeech(requestId) {
+  if (requestId !== ttsRequestId) {
     return;
   }
 
-  cancelSpeech();
+  ttsRequestId += 1;
+  ttsAbortController = null;
+  cleanupCurrentAudio();
+  setSpeaking(false);
+  setStatus("Ready", "ready");
+}
 
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1;
-  utterance.pitch = 1;
-  utterance.lang = "en-US";
-  currentUtterance = utterance;
+async function getErrorDetail(response, fallback) {
+  try {
+    const payload = await response.json();
+    return payload.detail || fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
 
-  utterance.addEventListener("end", () => {
-    if (currentUtterance !== utterance) {
-      return;
+function setTtsAvailable(isAvailable) {
+  ttsConfigured = ttsPlaybackSupported && isAvailable;
+  speakReplies.disabled = !ttsConfigured;
+
+  if (!ttsConfigured) {
+    const hadActiveSpeech = Boolean(ttsAbortController || currentAudio);
+    speakReplies.checked = false;
+    stopCurrentSpeech();
+    if (hadActiveSpeech) {
+      setStatus("Ready", "ready");
     }
+  }
+}
 
-    currentUtterance = null;
-    setSpeaking(false);
-    setStatus("Ready", "ready");
-  });
-
-  utterance.addEventListener("error", () => {
-    if (currentUtterance !== utterance) {
-      return;
-    }
-
-    currentUtterance = null;
-    setSpeaking(false);
-    setStatus("Ready", "ready");
-  });
-
-  setSpeaking(true);
-  setStatus("Speaking reply", "working");
+async function loadHealth() {
+  if (!ttsPlaybackSupported) {
+    setTtsAvailable(false);
+    return;
+  }
 
   try {
-    window.speechSynthesis.speak(utterance);
-  } catch (error) {
-    if (currentUtterance !== utterance) {
+    const response = await fetch("/health");
+    if (!response.ok) {
       return;
     }
 
-    currentUtterance = null;
-    setSpeaking(false);
-    setStatus("Ready", "ready");
+    const payload = await response.json();
+    setTtsAvailable(Boolean(payload.elevenlabs_configured));
+  } catch (error) {
+    // Leave TTS enabled if health is unavailable; /api/tts/session failures are non-fatal.
+  }
+}
+
+async function speakReply(text) {
+  if (!ttsConfigured || !speakReplies.checked || !text) {
+    return false;
+  }
+
+  stopCurrentSpeech();
+  const requestId = ++ttsRequestId;
+  const controller = new AbortController();
+  ttsAbortController = controller;
+  setSpeaking(true);
+  setStatus("Generating speech", "working");
+
+  try {
+    const response = await fetch("/api/tts/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
+
+    if (requestId !== ttsRequestId) {
+      return false;
+    }
+
+    if (!response.ok) {
+      const detail = await getErrorDetail(response, "TTS request failed.");
+      throw new Error(detail);
+    }
+
+    const session = await response.json();
+    if (requestId !== ttsRequestId) {
+      return false;
+    }
+
+    if (!session.playback_url) {
+      throw new Error("TTS session did not include a playback URL.");
+    }
+
+    ttsAbortController = null;
+    currentAudio = new Audio(session.playback_url);
+    currentAudio.preload = "auto";
+    currentAudio.addEventListener("ended", () => finishSpeech(requestId), {
+      once: true,
+    });
+    currentAudio.addEventListener("error", () => finishSpeech(requestId), {
+      once: true,
+    });
+    currentAudio.addEventListener(
+      "playing",
+      () => {
+        if (requestId === ttsRequestId) {
+          setStatus("Speaking reply", "working");
+        }
+      },
+      { once: true },
+    );
+
+    setStatus("Starting speech", "working");
+    await currentAudio.play();
+    return true;
+  } catch (error) {
+    if (requestId !== ttsRequestId || error.name === "AbortError") {
+      return false;
+    }
+
+    finishSpeech(requestId);
+    return false;
   }
 }
 
@@ -108,7 +203,7 @@ function getSupportedMimeType() {
 }
 
 async function startRecording() {
-  cancelSpeech();
+  stopCurrentSpeech();
   metadata.textContent = "";
   setTranscript("Listening...", true);
   setAssistantReply("Waiting for transcript...", true);
@@ -188,8 +283,10 @@ async function uploadRecording() {
     ]
       .filter(Boolean)
       .join(" | ");
-    setStatus("Ready", "ready");
-    speakReply(payload.reply);
+    if (!payload.reply || !speakReplies.checked || !ttsConfigured) {
+      setStatus("Ready", "ready");
+    }
+    void speakReply(payload.reply);
   } catch (error) {
     setTranscript(error.message, false);
     setAssistantReply("Assistant reply unavailable.", true);
@@ -225,13 +322,13 @@ recordButton.addEventListener("click", async () => {
 });
 
 stopSpeakingButton.addEventListener("click", () => {
-  cancelSpeech();
+  stopCurrentSpeech();
   setStatus("Ready", "ready");
 });
 
 speakReplies.addEventListener("change", () => {
   if (!speakReplies.checked) {
-    cancelSpeech();
+    stopCurrentSpeech();
     setStatus("Ready", "ready");
   }
 });
@@ -241,8 +338,4 @@ if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
   setStatus("Browser recording is not supported", "error");
 }
 
-if (!ttsSupported) {
-  speakReplies.checked = false;
-  speakReplies.disabled = true;
-  stopSpeakingButton.disabled = true;
-}
+loadHealth();
