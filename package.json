@@ -1,0 +1,1 @@
+{"scripts":{"start":"node server.js","check":"node --check server.js"},"dependencies":{"@fastify/static":"latest","dotenv":"latest","fastify":"latest","ws":"latest"},"devDependencies":{}}

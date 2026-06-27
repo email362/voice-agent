@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Deepgram Voice Agent POC</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Deepgram Voice Agent POC</p>
+      <h1>Talk to an end-to-end realtime voice agent.</h1>
+      <p class="lede">The browser streams 24 kHz linear PCM microphone audio to this app's WebSocket proxy, which forwards it to Deepgram's Voice Agent API. Deepgram streams text events and synthesized audio back.</p>
+      <div class="actions">
+        <button id="startBtn">Start conversation</button>
+        <button id="stopBtn" disabled>Stop</button>
+      </div>
+      <p id="status" class="status">Idle. Add <code>DEEPGRAM_API_KEY</code> to <code>.env</code>, then run <code>npm start</code>.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Agent settings</h2>
+      <label>System prompt
+        <textarea id="prompt">You are a concise, friendly voice assistant for a product demo. Keep responses brief and conversational.</textarea>
+      </label>
+      <div class="grid">
+        <label>Greeting <input id="greeting" value="Hi! I'm your Deepgram voice agent. What would you like to try?" /></label>
+        <label>LLM model <input id="thinkModel" value="gpt-4o-mini" /></label>
+        <label>Voice <input id="voiceModel" value="aura-2-asteria-en" /></label>
+        <label>Language <input id="language" value="en" /></label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Transcript & events</h2>
+      <div id="transcript" class="transcript"></div>
+      <pre id="events" class="events"></pre>
+    </section>
+  </main>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
