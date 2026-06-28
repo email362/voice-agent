@@ -1,11 +1,13 @@
 const recordButton = document.querySelector("#recordButton");
 const statusDot = document.querySelector("#statusDot");
 const statusText = document.querySelector("#statusText");
-const transcript = document.querySelector("#transcript");
-const assistantReply = document.querySelector("#assistantReply");
 const metadata = document.querySelector("#metadata");
 const speakReplies = document.querySelector("#speakReplies");
 const stopSpeakingButton = document.querySelector("#stopSpeakingButton");
+const newConversationButton = document.querySelector("#newConversationButton");
+const conversationList = document.querySelector("#conversationList");
+const chatMessages = document.querySelector("#chatMessages");
+const emptyState = document.querySelector("#emptyState");
 
 let mediaRecorder = null;
 let mediaStream = null;
@@ -16,9 +18,10 @@ let ttsAbortController = null;
 let currentAudio = null;
 let currentAudioUrl = null;
 let ttsRequestId = 0;
+let activeConversationId = null;
+let conversations = [];
 
-const ttsPlaybackSupported =
-  "Audio" in window;
+const ttsPlaybackSupported = "Audio" in window;
 let ttsConfigured = ttsPlaybackSupported;
 
 function setStatus(message, state = "ready") {
@@ -26,19 +29,18 @@ function setStatus(message, state = "ready") {
   statusDot.className = `status-dot is-${state}`;
 }
 
-function setTranscript(text, isPlaceholder = false) {
-  transcript.textContent = text;
-  transcript.classList.toggle("transcript-placeholder", isPlaceholder);
-}
-
-function setAssistantReply(text, isPlaceholder = false) {
-  assistantReply.textContent = text;
-  assistantReply.classList.toggle("transcript-placeholder", isPlaceholder);
-}
-
 function setSpeaking(isSpeaking) {
   stopSpeakingButton.hidden = !isSpeaking;
   stopSpeakingButton.disabled = !isSpeaking;
+}
+
+function setConversationControlsDisabled(isDisabled) {
+  newConversationButton.disabled = isDisabled;
+  conversationList
+    .querySelectorAll("button")
+    .forEach((button) => {
+      button.disabled = isDisabled;
+    });
 }
 
 function cleanupCurrentAudio() {
@@ -85,6 +87,179 @@ async function getErrorDetail(response, fallback) {
     return payload.detail || fallback;
   } catch (error) {
     return fallback;
+  }
+}
+
+async function fetchJson(url, options = {}, fallback = "Request failed.") {
+  const response = await fetch(url, options);
+  if (!response.ok) {
+    const detail = await getErrorDetail(response, fallback);
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+function formatConversationTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function renderConversationList() {
+  conversationList.replaceChildren();
+
+  if (!conversations.length) {
+    const empty = document.createElement("p");
+    empty.className = "conversation-empty";
+    empty.textContent = "No conversations yet.";
+    conversationList.append(empty);
+    return;
+  }
+
+  conversations.forEach((conversation) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "conversation-item";
+    button.classList.toggle("is-active", conversation.id === activeConversationId);
+    button.disabled = isRecording;
+    button.addEventListener("click", () => {
+      void selectConversation(conversation.id);
+    });
+
+    const title = document.createElement("span");
+    title.className = "conversation-title";
+    title.textContent = conversation.title || "New Conversation";
+
+    const updated = document.createElement("span");
+    updated.className = "conversation-time";
+    updated.textContent = formatConversationTime(conversation.updated_at);
+
+    button.append(title, updated);
+    conversationList.append(button);
+  });
+}
+
+function renderChat(conversation) {
+  chatMessages.replaceChildren();
+  const messages = conversation?.messages || [];
+  emptyState.hidden = messages.length > 0;
+
+  messages.forEach((message) => {
+    const item = document.createElement("article");
+    item.className = `chat-message is-${message.role}`;
+
+    const label = document.createElement("div");
+    label.className = "chat-message-label";
+    label.textContent = message.role === "assistant" ? "Assistant" : "You";
+
+    const content = document.createElement("p");
+    content.textContent = message.content || "";
+
+    item.append(label, content);
+    chatMessages.append(item);
+  });
+
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function renderErrorMessage(message) {
+  chatMessages.replaceChildren();
+  emptyState.hidden = true;
+
+  const item = document.createElement("article");
+  item.className = "chat-message is-error";
+  const label = document.createElement("div");
+  label.className = "chat-message-label";
+  label.textContent = "Error";
+  const content = document.createElement("p");
+  content.textContent = message;
+
+  item.append(label, content);
+  chatMessages.append(item);
+}
+
+async function refreshConversations() {
+  conversations = await fetchJson(
+    "/api/conversations",
+    {},
+    "Could not load conversations.",
+  );
+  renderConversationList();
+}
+
+async function createConversation({ select = true } = {}) {
+  const conversation = await fetchJson(
+    "/api/conversations",
+    { method: "POST" },
+    "Could not create a conversation.",
+  );
+  await refreshConversations();
+
+  if (select) {
+    activeConversationId = conversation.id;
+    renderConversationList();
+    renderChat(conversation);
+    metadata.textContent = "";
+  }
+
+  return conversation;
+}
+
+async function selectConversation(conversationId) {
+  if (conversationId === activeConversationId || isRecording) {
+    return;
+  }
+
+  stopCurrentSpeech();
+  setStatus("Loading conversation", "working");
+
+  try {
+    const conversation = await fetchJson(
+      `/api/conversations/${encodeURIComponent(conversationId)}`,
+      {},
+      "Could not load the conversation.",
+    );
+    activeConversationId = conversation.id;
+    renderChat(conversation);
+    renderConversationList();
+    metadata.textContent = "";
+    setStatus("Ready", "ready");
+  } catch (error) {
+    renderErrorMessage(error.message);
+    setStatus("Error", "error");
+  }
+}
+
+async function ensureActiveConversation() {
+  if (activeConversationId) {
+    return activeConversationId;
+  }
+
+  const conversation = await createConversation();
+  return conversation.id;
+}
+
+async function initializeConversations() {
+  setStatus("Loading conversations", "working");
+
+  try {
+    await refreshConversations();
+    if (!conversations.length) {
+      await createConversation();
+    } else {
+      await selectConversation(conversations[0].id);
+    }
+    setStatus("Ready", "ready");
+  } catch (error) {
+    renderErrorMessage(error.message);
+    setStatus("Error", "error");
   }
 }
 
@@ -204,12 +379,12 @@ function getSupportedMimeType() {
 
 async function startRecording() {
   stopCurrentSpeech();
+  await ensureActiveConversation();
   metadata.textContent = "";
-  setTranscript("Listening...", true);
-  setAssistantReply("Waiting for transcript...", true);
   setStatus("Recording", "recording");
   recordButton.textContent = "Stop Recording";
   recordButton.classList.add("is-recording");
+  setConversationControlsDisabled(true);
 
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const mimeType = getSupportedMimeType();
@@ -253,25 +428,28 @@ async function uploadRecording() {
   const formData = new FormData();
 
   formData.append("file", audioBlob, `recording.${extension}`);
+  if (activeConversationId) {
+    formData.append("conversation_id", activeConversationId);
+  }
+
   setStatus("Transcribing with Whisper", "working");
   assistantStatusTimer = window.setTimeout(() => {
     setStatus("Asking assistant", "working");
   }, 1500);
 
   try {
-    const response = await fetch("/api/transcribe", {
-      method: "POST",
-      body: formData,
-    });
+    const payload = await fetchJson(
+      "/api/transcribe",
+      {
+        method: "POST",
+        body: formData,
+      },
+      "Transcription request failed.",
+    );
 
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail || "Transcription request failed.");
-    }
-
-    setTranscript(payload.text || "(No speech detected)");
-    const replyText = payload.reply || "(No assistant reply)";
-    setAssistantReply(replyText, !payload.reply);
+    activeConversationId = payload.conversation_id;
+    renderChat(payload.conversation);
+    await refreshConversations();
     metadata.textContent = [
       payload.language ? `Language: ${payload.language}` : null,
       `Audio: ${payload.duration_seconds}s`,
@@ -288,8 +466,7 @@ async function uploadRecording() {
     }
     void speakReply(payload.reply);
   } catch (error) {
-    setTranscript(error.message, false);
-    setAssistantReply("Assistant reply unavailable.", true);
+    renderErrorMessage(error.message);
     metadata.textContent = "";
     setStatus("Error", "error");
   } finally {
@@ -301,6 +478,8 @@ async function uploadRecording() {
     audioChunks = [];
     mediaRecorder = null;
     mediaStream = null;
+    setConversationControlsDisabled(false);
+    renderConversationList();
   }
 }
 
@@ -313,11 +492,28 @@ recordButton.addEventListener("click", async () => {
   try {
     await startRecording();
   } catch (error) {
-    setTranscript(error.message, false);
-    setAssistantReply("Assistant reply unavailable.", true);
+    renderErrorMessage(error.message);
     setStatus("Microphone unavailable", "error");
     recordButton.textContent = "Start Recording";
     recordButton.classList.remove("is-recording");
+    setConversationControlsDisabled(false);
+  }
+});
+
+newConversationButton.addEventListener("click", async () => {
+  if (isRecording) {
+    return;
+  }
+
+  stopCurrentSpeech();
+  setStatus("Creating conversation", "working");
+
+  try {
+    await createConversation();
+    setStatus("Ready", "ready");
+  } catch (error) {
+    renderErrorMessage(error.message);
+    setStatus("Error", "error");
   }
 });
 
@@ -339,3 +535,4 @@ if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
 }
 
 loadHealth();
+void initializeConversations();

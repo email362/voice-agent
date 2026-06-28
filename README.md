@@ -81,7 +81,10 @@ Do not commit voice samples to this repository. Only create or use cloned voices
 ## API
 
 - `GET /health` returns backend health, the configured Whisper and NanoGPT models, whether NanoGPT and ElevenLabs are configured, and whether `ffmpeg` is available.
-- `POST /api/transcribe` accepts a multipart form upload named `file` and returns transcription text, detected language, audio duration, Whisper processing time, NanoGPT assistant reply, NanoGPT model, and NanoGPT processing time.
+- `POST /api/conversations` creates an in-memory conversation for the current server process.
+- `GET /api/conversations` lists in-memory conversation metadata, newest first.
+- `GET /api/conversations/{id}` returns one in-memory conversation with its text messages.
+- `POST /api/transcribe` accepts a multipart form upload named `file` and an optional `conversation_id`, appends the transcript and reply to that in-memory conversation, sends recent prior messages to NanoGPT for context, and returns the latest turn plus the full conversation.
 - `POST /api/tts/session` accepts JSON shaped like `{ "text": "assistant reply text" }` and returns a short-lived playback URL without exposing the text in the query string.
 - `GET /api/tts/stream/{id}` streams `audio/mpeg` MP3 bytes from ElevenLabs so the browser can start playback before the full reply has downloaded.
 - `POST /api/tts` accepts JSON shaped like `{ "text": "assistant reply text" }` and returns buffered `audio/mpeg` MP3 bytes from ElevenLabs as a fallback/debug endpoint.

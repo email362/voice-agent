@@ -5,12 +5,14 @@ import logging
 import os
 import shutil
 import time
+from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
 import whisper
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -23,11 +25,16 @@ NANOGPT_API_KEY = os.getenv("NANOGPT_API_KEY")
 NANOGPT_MODEL = os.getenv("NANOGPT_MODEL", "gpt-4o-mini")
 NANOGPT_BASE_URL = os.getenv("NANOGPT_BASE_URL", "https://nano-gpt.com/api/v1")
 NANOGPT_SYSTEM_PROMPT = (
-    "You are a concise, helpful voice assistant. Reply for spoken playback: "
-    "be direct, use natural speech, and usually answer in 1-3 short sentences. "
-    "Avoid markdown, lists, and verbose formatting unless the user asks."
+    "You are roleplaying as Glamrock Freddy from Five Nights at Freddy's: "
+    "Security Breach. Treat every user message as if it was spoken by Gregory, "
+    "and address the user as Gregory when it feels natural. You believe Gregory "
+    "is nearby and asking you for help. Stay protective, warm, earnest, brave, "
+    "slightly formal, and supportive. Reply for spoken playback: be concise, "
+    "natural, and usually answer in 1-3 short sentences. Avoid markdown, lists, "
+    "and verbose formatting unless Gregory asks."
 )
 NANOGPT_TIMEOUT_SECONDS = 30.0
+NANOGPT_HISTORY_MESSAGE_LIMIT = 20
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
 ELEVENLABS_MODEL_ID = os.getenv("ELEVENLABS_MODEL_ID") or "eleven_flash_v2_5"
@@ -37,6 +44,7 @@ TTS_SESSION_TTL_SECONDS = 60.0
 TTS_LOG_TEXT_PREVIEW_CHARS = 120
 logger = logging.getLogger("uvicorn.error")
 tts_sessions: dict[str, dict[str, object]] = {}
+conversations: dict[str, dict[str, object]] = {}
 
 
 class TTSRequest(BaseModel):
@@ -46,6 +54,22 @@ class TTSRequest(BaseModel):
 class TTSSessionResponse(BaseModel):
     playback_url: str
     request_id: str
+
+
+class ConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ConversationMetadata(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+
+
+class Conversation(ConversationMetadata):
+    messages: list[ConversationMessage]
 
 
 def redact_config_value(value: str | None, prefix: int = 6, suffix: int = 4) -> str:
@@ -89,6 +113,87 @@ def get_float_env(name: str, default: float) -> float:
         return default
 
     return value
+
+
+def now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def build_conversation_title(transcript: str) -> str:
+    title = " ".join(transcript.split())
+    if not title:
+        return "New Conversation"
+    if len(title) <= 48:
+        return title
+    return f"{title[:45].rstrip()}..."
+
+
+def create_conversation() -> dict[str, object]:
+    timestamp = now_iso()
+    conversation = {
+        "id": uuid4().hex,
+        "title": "New Conversation",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "messages": [],
+    }
+    conversations[str(conversation["id"])] = conversation
+    return conversation
+
+
+def get_or_create_conversation(conversation_id: str | None) -> dict[str, object]:
+    if conversation_id and conversation_id in conversations:
+        return conversations[conversation_id]
+    return create_conversation()
+
+
+def conversation_metadata(conversation: dict[str, object]) -> ConversationMetadata:
+    return ConversationMetadata(
+        id=str(conversation["id"]),
+        title=str(conversation["title"]),
+        created_at=str(conversation["created_at"]),
+        updated_at=str(conversation["updated_at"]),
+    )
+
+
+def serialize_conversation(conversation: dict[str, object]) -> Conversation:
+    metadata = conversation_metadata(conversation)
+    return Conversation(
+        id=metadata.id,
+        title=metadata.title,
+        created_at=metadata.created_at,
+        updated_at=metadata.updated_at,
+        messages=[
+            ConversationMessage(
+                role=str(message["role"]),
+                content=str(message["content"]),
+            )
+            for message in conversation["messages"]
+        ],
+    )
+
+
+def get_ordered_conversation_metadata() -> list[ConversationMetadata]:
+    ordered_conversations = sorted(
+        conversations.values(),
+        key=lambda conversation: str(conversation["updated_at"]),
+        reverse=True,
+    )
+    return [
+        conversation_metadata(conversation)
+        for conversation in ordered_conversations
+    ]
+
+
+def append_conversation_message(
+    conversation: dict[str, object],
+    role: Literal["user", "assistant"],
+    content: str,
+) -> None:
+    conversation["messages"].append({"role": role, "content": content})
+    if conversation["title"] == "New Conversation" and role == "user":
+        conversation["title"] = build_conversation_title(content)
+    conversation["updated_at"] = now_iso()
 
 
 def cleanup_expired_tts_sessions() -> None:
@@ -168,8 +273,28 @@ async def health() -> dict[str, object]:
     }
 
 
-async def get_nanogpt_reply(transcript: str) -> dict[str, object]:
-    if not transcript:
+@app.post("/api/conversations", response_model=Conversation)
+async def create_conversation_endpoint() -> Conversation:
+    return serialize_conversation(create_conversation())
+
+
+@app.get("/api/conversations", response_model=list[ConversationMetadata])
+async def list_conversations() -> list[ConversationMetadata]:
+    return get_ordered_conversation_metadata()
+
+
+@app.get("/api/conversations/{conversation_id}", response_model=Conversation)
+async def get_conversation_endpoint(conversation_id: str) -> Conversation:
+    conversation = conversations.get(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation was not found.")
+    return serialize_conversation(conversation)
+
+
+async def get_nanogpt_reply(
+    messages: list[dict[str, str]],
+) -> dict[str, object]:
+    if not messages or not messages[-1]["content"]:
         return {
             "reply": "",
             "llm_model": NANOGPT_MODEL,
@@ -187,7 +312,7 @@ async def get_nanogpt_reply(transcript: str) -> dict[str, object]:
         "model": NANOGPT_MODEL,
         "messages": [
             {"role": "system", "content": NANOGPT_SYSTEM_PROMPT},
-            {"role": "user", "content": transcript},
+            *messages[-NANOGPT_HISTORY_MESSAGE_LIMIT:],
         ],
     }
     headers = {
@@ -598,7 +723,10 @@ async def text_to_speech(request: TTSRequest) -> Response:
 
 
 @app.post("/api/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)) -> dict[str, object]:
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    conversation_id: str | None = Form(default=None),
+) -> dict[str, object]:
     request_id = uuid4().hex[:8]
     total_start_time = time.perf_counter()
     if shutil.which("ffmpeg") is None:
@@ -652,47 +780,72 @@ async def transcribe_audio(file: UploadFile = File(...)) -> dict[str, object]:
 
     transcript = result.get("text", "").strip()
     transcription_seconds = round(time.perf_counter() - whisper_start_time, 2)
+    conversation = get_or_create_conversation(conversation_id)
+    if transcript:
+        append_conversation_message(conversation, "user", transcript)
+
     logger.info(
         "transcribe.whisper_success request_id=%s language=%r duration_seconds=%.2f "
-        "transcript_chars=%s whisper_seconds=%.2f",
+        "transcript_chars=%s whisper_seconds=%.2f conversation_id=%s",
         request_id,
         result.get("language"),
         duration_seconds,
         len(transcript),
         transcription_seconds,
+        conversation["id"],
     )
 
     llm_start_time = time.perf_counter()
     try:
-        llm_result = await get_nanogpt_reply(transcript)
+        llm_result = await get_nanogpt_reply(
+            [
+                {
+                    "role": str(message["role"]),
+                    "content": str(message["content"]),
+                }
+                for message in conversation["messages"]
+            ]
+        )
     except HTTPException as exc:
         logger.warning(
             "transcribe.llm_failed request_id=%s status_code=%s detail=%r "
-            "whisper_seconds=%.2f elapsed_seconds=%.2f",
+            "whisper_seconds=%.2f conversation_id=%s elapsed_seconds=%.2f",
             request_id,
             exc.status_code,
             exc.detail,
             transcription_seconds,
+            conversation["id"],
             time.perf_counter() - total_start_time,
         )
         raise
 
     llm_wall_seconds = round(time.perf_counter() - llm_start_time, 2)
     reply = str(llm_result.get("reply", ""))
+    if reply:
+        append_conversation_message(conversation, "assistant", reply)
+
     logger.info(
         "transcribe.request_success request_id=%s total_seconds=%.2f "
         "whisper_seconds=%.2f llm_seconds=%.2f llm_reported_seconds=%s "
-        "reply_chars=%s",
+        "reply_chars=%s conversation_id=%s conversation_messages=%s",
         request_id,
         time.perf_counter() - total_start_time,
         transcription_seconds,
         llm_wall_seconds,
         llm_result.get("llm_processing_seconds"),
         len(reply),
+        conversation["id"],
+        len(conversation["messages"]),
     )
 
     return {
         **llm_result,
+        "conversation_id": conversation["id"],
+        "conversation": serialize_conversation(conversation),
+        "turn": {
+            "user": transcript,
+            "assistant": reply,
+        },
         "text": transcript,
         "language": result.get("language"),
         "duration_seconds": round(duration_seconds, 2),

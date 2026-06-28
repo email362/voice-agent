@@ -8,6 +8,13 @@
   </head>
   <body>
     <main class="shell">
+      <aside class="conversation-sidebar" aria-label="Conversations">
+        <button id="newConversationButton" class="secondary-button new-conversation-button" type="button">
+          New Conversation
+        </button>
+        <div id="conversationList" class="conversation-list"></div>
+      </aside>
+
       <section class="panel">
         <div>
           <p class="eyebrow">Voice Agent POC</p>
@@ -33,18 +40,11 @@
           <span id="statusText">Ready</span>
         </div>
 
-        <section class="transcript-panel" aria-live="polite">
-          <h2>Transcript</h2>
-          <p id="transcript" class="transcript-placeholder">
-            Record a short sample to see Whisper output here.
-          </p>
-        </section>
-
-        <section class="transcript-panel assistant-panel" aria-live="polite">
-          <h2>Assistant Reply</h2>
-          <p id="assistantReply" class="transcript-placeholder">
-            The assistant reply will appear here after transcription.
-          </p>
+        <section class="chat-panel" aria-live="polite" aria-label="Conversation history">
+          <div id="emptyState" class="empty-state">
+            Record a short sample to start this conversation.
+          </div>
+          <div id="chatMessages" class="chat-messages"></div>
         </section>
 
         <p id="metadata" class="metadata"></p>
