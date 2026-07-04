@@ -54,6 +54,7 @@ wss.on('connection', (client) => {
   let assistantAudioFlushRunning = false;
   let assistantAudioFlushQueue = [];
   let rvcDisabledForSession = false;
+  let deepgramClosed = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
   const clearAssistantAudioBuffer = () => {
     assistantAudioChunks = [];
@@ -67,6 +68,14 @@ wss.on('connection', (client) => {
     abortAssistantAudioConversion();
     assistantAudioFlushQueue = [];
     clearAssistantAudioBuffer();
+  };
+  const closeClientAfterAssistantAudio = () => {
+    if (!deepgramClosed) return;
+    if (assistantAudioFlushQueue.length) return;
+    if (assistantAudioChunks.length) {
+      discardAssistantAudioBuffer();
+    }
+    if (client.readyState === WebSocket.OPEN) client.close();
   };
   const logAudioProgress = () => {
     if (!DEBUG_AUDIO) return;
@@ -117,6 +126,7 @@ wss.on('connection', (client) => {
         sendToClient(flush.convertedAudio, true);
       }
     }
+    closeClientAfterAssistantAudio();
   };
 
   const endConversation = (errorMessage) => {
@@ -236,8 +246,9 @@ wss.on('connection', (client) => {
   });
   deepgram.on('error', (error) => endConversation(error.message));
   deepgram.on('close', (code, reason) => {
+    deepgramClosed = true;
     sendToClient(JSON.stringify({ type: 'ProxyClosed', code, reason: reason.toString() }));
-    if (client.readyState === WebSocket.OPEN) client.close();
+    closeClientAfterAssistantAudio();
   });
 
   client.on('message', (data, isBinary) => {

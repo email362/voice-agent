@@ -176,12 +176,13 @@ class RvcEngine:
         cancelled: Callable[[], bool] | None = None,
     ) -> Path:
         _patch_torch_load_for_rvc()
-        await self._conversion_lock.acquire()
-        release_lock = True
+        release_lock = False
         try:
             self._check_cancelled(cancelled)
             rvc = await self._load_backend()
             self._check_cancelled(cancelled)
+            await self._conversion_lock.acquire()
+            release_lock = True
             output_fd, output_name = tempfile.mkstemp(dir=input_path.parent, suffix=".wav")
             os.close(output_fd)
             output_path = Path(output_name)

@@ -33,5 +33,7 @@ assert.match(server, /ok: Boolean\(DEEPGRAM_API_KEY\)/, 'server.js health should
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');
 assert.match(server, /discardAssistantAudioBuffer\(\);/, 'server.js should discard queued assistant audio on barge-in or disconnect');
+assert.match(server, /const closeClientAfterAssistantAudio = \(\) => \{[\s\S]*if \(!deepgramClosed\) return;[\s\S]*if \(assistantAudioFlushQueue\.length\) return;[\s\S]*if \(assistantAudioChunks\.length\) \{[\s\S]*discardAssistantAudioBuffer\(\);[\s\S]*\}[\s\S]*if \(client\.readyState === WebSocket\.OPEN\) client\.close\(\);[\s\S]*\};/, 'server.js should defer browser close until pending assistant audio is handled');
+assert.match(server, /deepgram\.on\('close', \(code, reason\) => \{[\s\S]*deepgramClosed = true;[\s\S]*closeClientAfterAssistantAudio\(\);[\s\S]*\}\);/, 'server.js should wait for buffered assistant audio before closing the browser socket');
 
 console.log('audio-flow checks passed');
