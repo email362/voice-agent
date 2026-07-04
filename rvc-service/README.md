@@ -1,10 +1,10 @@
 # RVC Voice Conversion Service
 
-Isolated local Python service for converting agent TTS audio through an RVC custom voice. This service is intentionally separate from the existing Node/Fastify Deepgram app and is not wired into `server.js` yet.
+Isolated local Python service for converting agent TTS audio through an RVC custom voice. The service is still runnable on its own, and the Node/Fastify Deepgram app can call it through `RVC_SERVICE_URL` when conversion is enabled.
 
 ## Model Files
 
-The service auto-discovers model files from the project root and nearby model directories. Current files detected in `/home/chyer/projects/voice-agent`:
+The service auto-discovers model files from the project root and nearby model directories. Current files detected in this checkout:
 
 - `Glamrock-Freddy_119e_7259s.pth` - required RVC model file
 - `added_IVF1243_Flat_nprobe_1_v2.index` - optional retrieval index for better voice quality
@@ -36,7 +36,7 @@ For real RVC conversion, use Python 3.10. The current WSL default here is Python
 From the project root:
 
 ```bash
-cd /home/chyer/projects/voice-agent/rvc-service
+cd rvc-service
 python3.10 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -63,7 +63,7 @@ Observed in this environment: `pip install rvc-python` under Python 3.12 fails w
 ## Run
 
 ```bash
-cd /home/chyer/projects/voice-agent/rvc-service
+cd rvc-service
 source .venv/bin/activate
 RVC_DEVICE=cuda:0 python run.py
 ```
@@ -133,20 +133,19 @@ These tests prove:
 
 ## Deepgram App Integration
 
-The Node/Fastify Deepgram app can now call this service after each assistant utterance. The integration buffers Deepgram raw PCM assistant audio until `AgentAudioDone`, wraps it as WAV, posts it to `POST /convert`, and sends the converted WAV back to the browser. If conversion fails, the Node app falls back to the original Deepgram audio for that session.
+The Node/Fastify Deepgram app can now call this service after each assistant utterance. The integration buffers Deepgram raw PCM assistant audio until `AgentAudioDone`, wraps it as WAV, posts it to `POST /convert`, preserves event ordering while conversion runs, and sends the converted WAV back to the browser. If conversion fails or times out, the Node app falls back to the original Deepgram audio for that session.
 
 Start RVC first:
 
 ```bash
-cd /home/chyer/projects/voice-agent/rvc-service
+cd rvc-service
 RVC_DEVICE=cuda:0 .venv310/bin/python run.py
 ```
 
 Then start the Deepgram app from the project root:
 
 ```bash
-cd /home/chyer/projects/voice-agent
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH \
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" \
   RVC_SERVICE_URL=http://127.0.0.1:5055 \
   DEBUG_AUDIO=1 \
   npm start
@@ -160,3 +159,4 @@ Node integration environment variables:
 - `RVC_PITCH` - pitch shift passed to `/convert`, default `0`.
 - `RVC_INDEX_RATE` - retrieval index rate, default `0.5`.
 - `RVC_F0_METHOD` - f0 method, default `rmvpe`.
+- `DEBUG_AUDIO` - set to `1` to emit aggregate client audio and Deepgram event logs.

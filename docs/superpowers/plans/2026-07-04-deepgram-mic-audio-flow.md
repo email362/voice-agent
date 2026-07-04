@@ -185,8 +185,8 @@ setMicState('idle', 'Mic idle');
 Run:
 
 ```bash
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH node --check public/app.js
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH npm run check
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" node --check public/app.js
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" npm run check
 ```
 
 Expected: both commands exit `0`.
@@ -252,8 +252,8 @@ stopPlayback();
 Run:
 
 ```bash
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH node --check public/app.js
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH npm run check
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" node --check public/app.js
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" npm run check
 ```
 
 Expected: both commands exit `0`.
@@ -347,8 +347,8 @@ client.on('message', (data, isBinary) => {
 Run:
 
 ```bash
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH node --check server.js
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH npm run check
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" node --check server.js
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" npm run check
 ```
 
 Expected: both commands exit `0`.
@@ -363,7 +363,7 @@ Expected: both commands exit `0`.
 Run:
 
 ```bash
-PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH DEBUG_AUDIO=1 npm start
+PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" DEBUG_AUDIO=1 npm start
 ```
 
 Expected startup includes `Server listening at http://127.0.0.1:3000`.

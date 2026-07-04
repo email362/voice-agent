@@ -47,7 +47,7 @@
     <section class="hero">
       <p class="eyebrow">Architecture proposal before implementation</p>
       <h1>Separate local RVC conversion service for agent TTS audio.</h1>
-      <p class="lede">Create <span class="mono">rvc-service/</span> as an isolated Python/FastAPI app. It discovers the existing model files in the project root, exposes <span class="mono">GET /health</span> and <span class="mono">POST /convert</span>, and stays disconnected from the current Node/Fastify Deepgram proxy for now.</p>
+      <p class="lede">Create <span class="mono">rvc-service/</span> as an isolated Python/FastAPI app. It discovers the existing model files in the project root, exposes <span class="mono">GET /health</span> and <span class="mono">POST /convert</span>, and can be wired into the Node/Fastify Deepgram proxy through <span class="mono">RVC_SERVICE_URL</span>.</p>
     </section>
 
     <section class="panel stack">
@@ -97,7 +97,7 @@
     <section class="panel stack">
       <h2>Implementation scope after approval</h2>
       <div class="three">
-        <div class="card"><span class="label">Files</span><p class="muted"><span class="mono">rvc-service/app/</span>, <span class="mono">tests/</span>, <span class="mono">requirements.txt</span>, <span class="mono">README.md</span>. No edits to <span class="mono">server.js</span>.</p></div>
+        <div class="card"><span class="label">Files</span><p class="muted"><span class="mono">rvc-service/app/</span>, <span class="mono">tests/</span>, <span class="mono">requirements.txt</span>, <span class="mono">README.md</span>, and the Node proxy wiring in <span class="mono">server.js</span>.</p></div>
         <div class="card"><span class="label">Smoke checks</span><p class="muted">Tests prove model discovery, health payload, missing-backend behavior, and endpoint validation without requiring live Deepgram.</p></div>
         <div class="card"><span class="label">Runtime note</span><p class="muted">CUDA will be the default target: <span class="mono">RVC_DEVICE=cuda:0</span>. If CUDA is unavailable, the service falls back to <span class="mono">cpu</span> and reports the latency tradeoff in <span class="mono">/health</span>.</p></div>
       </div>
