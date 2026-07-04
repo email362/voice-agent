@@ -539,6 +539,73 @@ def test_convert_file_honors_cancellation_during_inference(monkeypatch, tmp_path
     asyncio.run(run_conversion())
 
 
+def test_convert_file_honors_cancellation_while_waiting_for_conversion_lock(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    infer_started = threading.Event()
+    first_finished = threading.Event()
+    second_started = threading.Event()
+    release = threading.Event()
+    call_count = 0
+    call_lock = threading.Lock()
+
+    class Backend:
+        def infer_file(self, input_path, output_path, **kwargs):
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                infer_started.set()
+            elif current_call == 2:
+                second_started.set()
+            release.wait(2)
+            if current_call == 1:
+                first_finished.set()
+            Path(output_path).write_bytes(b"RIFFmockWAVEdata")
+
+    backend = Backend()
+
+    async def fake_load_backend():
+        return backend
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    async def run_conversion():
+        cancelled = threading.Event()
+
+        def is_cancelled():
+            return cancelled.is_set()
+
+        first = asyncio.create_task(engine.convert_file(input_path, cancelled=is_cancelled))
+        assert await asyncio.to_thread(infer_started.wait, 2)
+        second = asyncio.create_task(engine.convert_file(input_path, cancelled=is_cancelled))
+        await asyncio.sleep(0.05)
+        assert not second_started.is_set()
+        cancelled.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(second, 1)
+        release.set()
+        output_path = await asyncio.wait_for(first, 2)
+        assert output_path.exists()
+        assert await asyncio.to_thread(first_finished.wait, 2)
+        assert not engine._conversion_lock.locked()
+
+    asyncio.run(run_conversion())
+
+
 def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles

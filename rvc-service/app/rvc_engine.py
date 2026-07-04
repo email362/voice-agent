@@ -181,8 +181,9 @@ class RvcEngine:
             self._check_cancelled(cancelled)
             rvc = await self._load_backend()
             self._check_cancelled(cancelled)
-            await self._conversion_lock.acquire()
+            await self._acquire_conversion_lock(cancelled)
             release_lock = True
+            self._check_cancelled(cancelled)
             output_fd, output_name = tempfile.mkstemp(dir=input_path.parent, suffix=".wav")
             os.close(output_fd)
             output_path = Path(output_name)
@@ -251,3 +252,16 @@ class RvcEngine:
         while not cancelled():
             await asyncio.sleep(0.05)
         raise asyncio.CancelledError
+
+    async def _acquire_conversion_lock(self, cancelled: Callable[[], bool] | None) -> None:
+        if cancelled is None:
+            await self._conversion_lock.acquire()
+            return
+
+        while True:
+            self._check_cancelled(cancelled)
+            try:
+                await asyncio.wait_for(self._conversion_lock.acquire(), timeout=0.05)
+                return
+            except asyncio.TimeoutError:
+                continue
