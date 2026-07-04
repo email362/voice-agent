@@ -64,7 +64,9 @@ def discover_model_files(settings: Settings) -> ModelFiles:
         raise FileNotFoundError(f"No .pth RVC model found. Searched: {searched}")
 
     if settings.index_path:
-        index_path = settings.index_path if _valid_model_file(settings.index_path, ".index") else None
+        if not _valid_model_file(settings.index_path, ".index"):
+            raise FileNotFoundError(f"RVC_INDEX_PATH must point to an existing .index file: {settings.index_path}")
+        index_path = settings.index_path
     else:
         index_dirs = _index_candidate_dirs(settings, model_path)
         index_path = next(

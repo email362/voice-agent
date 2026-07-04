@@ -39,6 +39,19 @@ def _patch_torch_load_for_rvc() -> None:
     torch.load = patched_load  # type: ignore[assignment]
 
 
+def _is_backend_dependency_error(exc: Exception) -> bool:
+    current: BaseException | None = exc
+    while current is not None:
+        if isinstance(current, (ImportError, ModuleNotFoundError)):
+            return True
+        if isinstance(current, OSError):
+            message = str(current).lower()
+            if "cannot open shared object file" in message or "dll load failed" in message:
+                return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 class RvcEngine:
     def __init__(self, model_files: ModelFiles, device_status: DeviceStatus) -> None:
         self.model_files = model_files
@@ -84,6 +97,9 @@ class RvcEngine:
             load_kwargs = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
             rvc.load_model(str(self.model_files.model_path), **load_kwargs)
         except Exception as exc:
+            if _is_backend_dependency_error(exc):
+                self._backend_error = str(exc)
+                raise RvcBackendUnavailable(f"rvc-python or one of its dependencies could not be imported: {exc}") from exc
             raise RvcConversionError(f"Failed to initialize RVC model: {exc}") from exc
 
         self._rvc = rvc

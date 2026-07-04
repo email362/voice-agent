@@ -92,6 +92,24 @@ def test_model_discovery_prefers_index_next_to_explicit_model(tmp_path):
     assert result.index_path == preferred_index.resolve()
 
 
+def test_model_discovery_rejects_invalid_explicit_index_path(tmp_path):
+    from app.config import Settings
+    from app.model_discovery import discover_model_files
+
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+
+    settings = Settings(
+        project_root=tmp_path,
+        model_path=model_path,
+        index_path=tmp_path / "missing.index",
+        device="cuda:0",
+    )
+
+    with pytest.raises(FileNotFoundError, match="RVC_INDEX_PATH"):
+        discover_model_files(settings)
+
+
 def test_health_reports_cuda_default_and_model_status():
     from app.main import create_app
 
@@ -293,6 +311,33 @@ def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path)
     assert seen["constructor_kwargs"] == {"device": "cpu"}
     assert seen["model_path"] == str(model_path)
     assert seen["load_kwargs"] == {}
+
+
+def test_initialize_backend_promotes_dependency_errors_to_unavailable(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcBackendUnavailable, RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    class FakeRVCInference:
+        def __init__(self, **kwargs):
+            raise ModuleNotFoundError("No module named 'torch'")
+
+    infer_module = types.ModuleType("rvc_python.infer")
+    infer_module.RVCInference = FakeRVCInference
+    package_module = types.ModuleType("rvc_python")
+    package_module.infer = infer_module
+    monkeypatch.setitem(sys.modules, "rvc_python", package_module)
+    monkeypatch.setitem(sys.modules, "rvc_python.infer", infer_module)
+
+    with pytest.raises(RvcBackendUnavailable, match="dependencies could not be imported"):
+        engine._initialize_backend()
 
 
 def test_initialize_backend_passes_index_path_to_supported_loader(monkeypatch, tmp_path):
