@@ -9,7 +9,7 @@ const PORT = Number(process.env.PORT || 3000);
 const DEEPGRAM_AGENT_URL = process.env.DEEPGRAM_AGENT_URL || 'wss://agent.deepgram.com/v1/agent/converse';
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const DEBUG_AUDIO = process.env.DEBUG_AUDIO === '1';
-const RVC_SERVICE_URL = process.env.RVC_SERVICE_URL || 'http://127.0.0.1:5055';
+const RVC_SERVICE_URL = process.env.RVC_SERVICE_URL ?? 'http://127.0.0.1:5055';
 const RVC_TIMEOUT_MS = Number(process.env.RVC_TIMEOUT_MS || 120000);
 const RVC_PITCH = Number(process.env.RVC_PITCH || 0);
 const RVC_INDEX_RATE = Number(process.env.RVC_INDEX_RATE || 0.5);

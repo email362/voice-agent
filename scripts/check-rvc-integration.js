@@ -41,6 +41,7 @@ const fs = require('node:fs');
 
   const server = fs.readFileSync('server.js', 'utf8');
   assert.match(server, /RVC_SERVICE_URL/, 'server should read RVC_SERVICE_URL');
+  assert.match(server, /process\.env\.RVC_SERVICE_URL \?\? 'http:\/\/127\.0\.0\.1:5055'/, 'server should preserve an empty RVC_SERVICE_URL to disable conversion');
   assert.match(server, /AgentAudioDone/, 'server should flush buffered assistant audio on AgentAudioDone');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
   assert.match(server, /generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(chunks\)/, 'server should skip stale fallback audio after generation changes');
@@ -55,7 +56,9 @@ const fs = require('node:fs');
   assert.match(browser, /decodeAudioData[\s\S]*if \(generation !== playbackGeneration\) return;[\s\S]*scheduleAudioBuffer\(decoded, generation\)/, 'browser should ignore decoded WAVs after barge-in');
 
   const main = fs.readFileSync('rvc-service/app/main.py', 'utf8');
-  assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should enforce an upload size cap');
+  assert.match(main, /class ConvertUploadLimitMiddleware/, 'RVC convert endpoint should limit request bodies before multipart parsing');
+  assert.match(main, /app\.add_middleware\(ConvertUploadLimitMiddleware, max_request_bytes=settings\.max_convert_upload_bytes \+ 1024 \* 1024\)/, 'RVC convert endpoint should apply the body limit middleware');
+  assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should still enforce an upload size cap');
 
   console.log('rvc integration checks passed');
 })().catch((error) => {

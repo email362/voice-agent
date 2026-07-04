@@ -20,6 +20,7 @@ let outboundAudioFrames = 0;
 let outboundAudioBytes = 0;
 let lastAudioStatusAt = 0;
 let playbackGeneration = 0;
+let conversationGeneration = 0;
 
 
 function setStatus(message) { statusEl.textContent = message; }
@@ -152,6 +153,7 @@ async function playAudio(arrayBuffer, generation = playbackGeneration) {
 }
 
 async function startConversation() {
+  const generation = ++conversationGeneration;
   startBtn.disabled = true;
   stopBtn.disabled = false;
   transcriptEl.textContent = '';
@@ -162,6 +164,18 @@ async function startConversation() {
   lastAudioStatusAt = 0;
   setMicState('connecting', 'Mic warming up');
   await startMic();
+  if (generation !== conversationGeneration) {
+    stopPlayback();
+    processor?.disconnect();
+    source?.disconnect();
+    micStream?.getTracks().forEach((track) => track.stop());
+    audioContext?.close();
+    processor = undefined;
+    source = undefined;
+    micStream = undefined;
+    audioContext = undefined;
+    return;
+  }
   const conversationSocket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`);
   socket = conversationSocket;
   conversationSocket.binaryType = 'arraybuffer';
@@ -199,6 +213,7 @@ async function startConversation() {
 
 function stopConversation(closingSocket) {
   if (closingSocket && socket && closingSocket !== socket) return;
+  conversationGeneration += 1;
   clearInterval(keepAlive);
   canStreamMic = false;
   setMicState('idle', 'Mic idle');

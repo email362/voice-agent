@@ -14,6 +14,41 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+async def invoke_asgi(app, body_parts):
+    messages = []
+    parts = list(body_parts)
+    index = 0
+
+    async def receive():
+        nonlocal index
+        if index >= len(parts):
+            return {"type": "http.request", "body": b"", "more_body": False}
+        body = parts[index]
+        index += 1
+        return {"type": "http.request", "body": body, "more_body": index < len(parts)}
+
+    async def send(message):
+        messages.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/convert",
+        "raw_path": b"/convert",
+        "query_string": b"",
+        "headers": [],
+        "client": ("testclient", 123),
+        "server": ("testserver", 80),
+        "root_path": "",
+    }
+
+    await app(scope, receive, send)
+    return messages
+
+
 def test_model_discovery_ignores_zone_identifier_and_prefers_project_root(monkeypatch):
     from app.config import Settings
     from app.model_discovery import discover_model_files
@@ -128,6 +163,21 @@ def test_convert_rejects_oversized_upload(tmp_path):
 
     assert response.status_code == 413
     assert "too large" in response.json()["detail"]
+
+
+def test_convert_rejects_oversized_upload_before_parsing():
+    from app.config import Settings
+    from app.main import create_app
+
+    app = create_app(Settings(max_convert_upload_bytes=1))
+    app.state.engine.convert_file = lambda *args, **kwargs: pytest.fail("conversion should not run")
+
+    messages = asyncio.run(invoke_asgi(app, [b"a" * 1024 * 1024, b"bb"]))
+    status = next(message for message in messages if message["type"] == "http.response.start")
+    body = next(message for message in messages if message["type"] == "http.response.body")
+
+    assert status["status"] == 413
+    assert b"too large" in body["body"]
 
 
 def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):

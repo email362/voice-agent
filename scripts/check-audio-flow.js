@@ -23,6 +23,8 @@ assert.match(app, /const conversationSocket = new WebSocket\(/, 'app.js should c
 assert.match(app, /if \(conversationSocket !== socket\) return;/, 'app.js should ignore stale socket events');
 assert.match(app, /conversationSocket\.addEventListener\('close', \(\) => stopConversation\(conversationSocket\)\);/, 'app.js should close the socket that actually disconnected');
 assert.match(app, /function stopConversation\(closingSocket\)/, 'app.js should accept the socket that triggered shutdown');
+assert.match(app, /let conversationGeneration = 0;/, 'app.js should track startup generations');
+assert.match(app, /if \(generation !== conversationGeneration\) \{[\s\S]*return;/, 'app.js should abort startup when stop is requested during mic setup');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');

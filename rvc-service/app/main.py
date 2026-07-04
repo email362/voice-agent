@@ -14,6 +14,45 @@ from .model_discovery import discover_model_files
 from .rvc_engine import RvcBackendUnavailable, RvcConversionError, RvcEngine
 
 
+class ConvertUploadLimitMiddleware:
+    def __init__(self, app, max_request_bytes: int) -> None:
+        self.app = app
+        self.max_request_bytes = max_request_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] != "/convert":
+            await self.app(scope, receive, send)
+            return
+
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                await self.app(scope, receive, send)
+                return
+
+            body.extend(message.get("body", b""))
+            if len(body) > self.max_request_bytes:
+                response = JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
+                await response(scope, receive, send)
+                return
+
+            if not message.get("more_body", False):
+                break
+
+        buffered_body = bytes(body)
+        body_sent = False
+
+        async def replay_receive():
+            nonlocal body_sent
+            if body_sent:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            body_sent = True
+            return {"type": "http.request", "body": buffered_body, "more_body": False}
+
+        await self.app(scope, replay_receive, send)
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     app = FastAPI(title="Voice Agent RVC Service", version="0.1.0")
@@ -34,19 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.device_status = device_status
     app.state.engine = engine
 
-    @app.middleware("http")
-    async def limit_convert_request_size(request, call_next):
-        if request.method == "POST" and request.url.path == "/convert":
-            content_length = request.headers.get("content-length")
-            if content_length is not None:
-                try:
-                    request_size = int(content_length)
-                except ValueError:
-                    request_size = None
-                else:
-                    if request_size > settings.max_convert_upload_bytes + 1024 * 1024:
-                        return JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
-        return await call_next(request)
+    app.add_middleware(ConvertUploadLimitMiddleware, max_request_bytes=settings.max_convert_upload_bytes + 1024 * 1024)
 
     @app.get("/health")
     async def health() -> dict:
