@@ -61,6 +61,7 @@ class RvcEngine:
         self._backend_failure: Exception | None = None
         self._rvc: Any | None = None
         self._backend_init_lock = asyncio.Lock()
+        self._backend_init_task: asyncio.Task[Any] | None = None
         self._conversion_lock = asyncio.Lock()
 
     @property
@@ -114,21 +115,51 @@ class RvcEngine:
         self._backend_error = None
         return rvc
 
-    async def _load_backend(self) -> Any:
+    def _clear_backend_init_task(self, task: asyncio.Task[Any]) -> None:
+        if self._backend_init_task is task:
+            self._backend_init_task = None
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self._backend_failure = exc
+
+    async def _load_backend(self, cancelled: Callable[[], bool] | None = None) -> Any:
         if self._rvc is not None:
             return self._rvc
         if self._backend_failure is not None:
             raise self._backend_failure
-        async with self._backend_init_lock:
+        await self._acquire_backend_init_lock(cancelled)
+        try:
             if self._rvc is not None:
                 return self._rvc
             if self._backend_failure is not None:
                 raise self._backend_failure
-            try:
-                return await asyncio.to_thread(self._initialize_backend)
-            except Exception as exc:
-                self._backend_failure = exc
-                raise
+            task = self._backend_init_task
+            if task is None:
+                task = asyncio.create_task(asyncio.to_thread(self._initialize_backend))
+                task.add_done_callback(self._clear_backend_init_task)
+                self._backend_init_task = task
+        finally:
+            if self._backend_init_lock.locked():
+                self._backend_init_lock.release()
+
+        if cancelled is None:
+            return await asyncio.shield(task)
+
+        cancel_task = asyncio.create_task(self._wait_for_cancellation(cancelled))
+        try:
+            done, _ = await asyncio.wait(
+                {asyncio.shield(task), cancel_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if cancel_task in done:
+                raise asyncio.CancelledError
+            return await task
+        finally:
+            cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
 
     @staticmethod
     def _check_cancelled(cancelled: Callable[[], bool] | None) -> None:
@@ -179,7 +210,7 @@ class RvcEngine:
         release_lock = False
         try:
             self._check_cancelled(cancelled)
-            rvc = await self._load_backend()
+            rvc = await self._load_backend(cancelled)
             self._check_cancelled(cancelled)
             await self._acquire_conversion_lock(cancelled)
             release_lock = True
@@ -262,6 +293,19 @@ class RvcEngine:
             self._check_cancelled(cancelled)
             try:
                 await asyncio.wait_for(self._conversion_lock.acquire(), timeout=0.05)
+                return
+            except asyncio.TimeoutError:
+                continue
+
+    async def _acquire_backend_init_lock(self, cancelled: Callable[[], bool] | None) -> None:
+        if cancelled is None:
+            await self._backend_init_lock.acquire()
+            return
+
+        while True:
+            self._check_cancelled(cancelled)
+            try:
+                await asyncio.wait_for(self._backend_init_lock.acquire(), timeout=0.05)
                 return
             except asyncio.TimeoutError:
                 continue

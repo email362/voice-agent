@@ -748,6 +748,59 @@ def test_load_backend_initialization_runs_off_thread(monkeypatch, tmp_path):
     assert calls == ["_initialize_backend"]
 
 
+def test_load_backend_honors_cancellation_during_cold_start(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    init_started = threading.Event()
+    release = threading.Event()
+    init_calls = 0
+    init_lock = threading.Lock()
+
+    def fake_initialize_backend(self):
+        nonlocal init_calls
+        with init_lock:
+            init_calls += 1
+        init_started.set()
+        assert release.wait(timeout=2), "backend initialization should be released by the test"
+        self._rvc = object()
+        return self._rvc
+
+    monkeypatch.setattr(RvcEngine, "_initialize_backend", fake_initialize_backend)
+
+    async def run_concurrent_loads():
+        cancelled = threading.Event()
+
+        def is_cancelled():
+            return cancelled.is_set()
+
+        first = asyncio.create_task(engine._load_backend(cancelled=is_cancelled))
+        assert await asyncio.to_thread(init_started.wait, 2)
+        await asyncio.sleep(0.05)
+        assert init_calls == 1
+        assert not engine._backend_init_lock.locked()
+        cancelled.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(first, 1)
+        second = asyncio.create_task(engine._load_backend())
+        assert not second.done()
+        release.set()
+        backend = await asyncio.wait_for(second, 2)
+        assert backend is engine._rvc
+
+    asyncio.run(run_concurrent_loads())
+
+    assert init_calls == 1
+
+
 def test_load_backend_caches_initialization_failure(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles
