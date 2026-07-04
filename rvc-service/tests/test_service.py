@@ -269,21 +269,22 @@ def test_convert_rejects_client_disconnect_before_conversion(monkeypatch):
 def test_convert_aborts_upload_copy_when_client_disconnects(monkeypatch):
     from app.main import create_app
     from starlette.requests import Request
-    from fastapi import UploadFile
+    from starlette.datastructures import UploadFile
 
     app = create_app()
     app.state.engine.convert_file = lambda *args, **kwargs: pytest.fail("conversion should not run")
 
-    disconnect_states = iter([False, True])
+    read_started = False
 
     async def disconnected(self):
-        return next(disconnect_states, True)
+        return read_started
 
     read_calls = 0
 
     async def slow_read(self, size=-1):
-        nonlocal read_calls
+        nonlocal read_calls, read_started
         read_calls += 1
+        read_started = True
         await asyncio.sleep(0.15)
         return b"RIFF....WAVEfmt " if read_calls == 1 else b""
 

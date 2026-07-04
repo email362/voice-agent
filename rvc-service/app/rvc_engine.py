@@ -225,6 +225,14 @@ class RvcEngine:
             return True
         return False
 
+    async def _load_backend_for_conversion(self, cancelled: Callable[[], bool] | None) -> Any:
+        try:
+            return await self._load_backend(cancelled)
+        except TypeError as error:
+            if not self._extra_positional_arg_rejected(error):
+                raise
+            return await self._load_backend()
+
     async def convert_file(
         self,
         input_path: Path,
@@ -238,12 +246,7 @@ class RvcEngine:
         release_lock = False
         try:
             self._check_cancelled(cancelled)
-            try:
-                rvc = await self._load_backend(cancelled)
-            except TypeError as error:
-                if cancelled is None or not self._extra_positional_arg_rejected(error):
-                    raise
-                rvc = await self._load_backend()
+            rvc = await self._load_backend_for_conversion(cancelled)
             self._check_cancelled(cancelled)
             await self._acquire_conversion_lock(cancelled)
             release_lock = True

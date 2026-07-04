@@ -77,7 +77,7 @@ const fs = require('node:fs');
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');
   assert.match(engine, /asyncio\.create_task\(asyncio\.to_thread\(self\._initialize_backend\)\)/, 'RVC backend initialization should run off the event loop');
   assert.match(engine, /async def _acquire_backend_init_lock\(self, cancelled:/, 'RVC backend initialization should be serialized');
-  assert.match(engine, /self\._check_cancelled\(cancelled\)[\s\S]*rvc = await self\._load_backend\(cancelled\)[\s\S]*self\._check_cancelled\(cancelled\)[\s\S]*await self\._acquire_conversion_lock\(cancelled\)/, 'RVC conversions should not hold the conversion lock during backend cold-start');
+  assert.match(engine, /self\._check_cancelled\(cancelled\)[\s\S]*rvc = await self\._load_backend_for_conversion\(cancelled\)[\s\S]*self\._check_cancelled\(cancelled\)[\s\S]*await self\._acquire_conversion_lock\(cancelled\)/, 'RVC conversions should not hold the conversion lock during backend cold-start');
   assert.match(engine, /await self\._conversion_lock\.acquire\(\)/, 'RVC conversions should hold the engine lock across cancellation cleanup');
   assert.match(engine, /release_lock = True/, 'RVC conversions should track deferred lock release');
   assert.doesNotMatch(engine, /index_path = str\(self\.model_files\.index_path\) if self\.model_files\.index_path else ''/, 'RVC backend should not force an empty index path');
