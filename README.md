@@ -29,7 +29,7 @@ sequenceDiagram
         LLM-->>Deepgram: Assistant response text
         Deepgram-->>Proxy: ConversationText events + audio bytes
         Proxy-->>Browser: Forward events + audio bytes
-        Browser-->>User: Render transcript and play PCM audio
+    Browser-->>User: Render transcript and play PCM or WAV audio
     end
 ```
 
@@ -38,7 +38,7 @@ sequenceDiagram
 | Integration point | Files | Responsibility | Configuration |
 | --- | --- | --- | --- |
 | Static web UI | `public/index.html`, `public/styles.css` | Presents the start/stop controls, agent settings, transcript, and raw event log. | User-editable prompt, greeting, LLM model, voice model, and language fields in the browser. |
-| Browser audio pipeline | `public/app.js` | Requests microphone permission, downsamples mic input to 24 kHz, encodes `linear16` PCM, streams binary frames, and schedules streamed PCM playback. | `SAMPLE_RATE` is currently fixed at `24000` to match the default Deepgram settings. |
+| Browser audio pipeline | `public/app.js` | Requests microphone permission, downsamples mic input to 24 kHz, encodes `linear16` PCM, streams binary frames, and schedules streamed PCM/WAV playback. | `SAMPLE_RATE` is currently fixed at `24000` to match the default Deepgram settings. |
 | Local WebSocket proxy | `server.js` | Accepts browser connections at `/ws/agent`, opens the Deepgram Voice Agent WebSocket, adds server-side auth, buffers assistant audio for optional RVC conversion, and forwards JSON and binary frames in both directions. | `DEEPGRAM_API_KEY`, `DEEPGRAM_AGENT_URL`, `PORT`, `RVC_SERVICE_URL`, and related RVC settings from `.env`. |
 | Deepgram Voice Agent | External Deepgram platform | Performs speech-to-text/listen, turn-taking, agent orchestration, text-to-speech/speak, and event/audio streaming. | The browser sends the `Settings` message after receiving Deepgram's `Welcome` event. |
 | Think/LLM provider | External provider configured through Deepgram settings | Generates the assistant's response text before Deepgram synthesizes the response audio. | Defaults to `open_ai` with `gpt-4o-mini`; update the UI fields or `buildSettings()` for other providers/models. |
@@ -84,7 +84,8 @@ Start the RVC service with CUDA:
 
 ```bash
 cd rvc-service
-RVC_DEVICE=cuda:0 .venv310/bin/python run.py
+source .venv/bin/activate
+RVC_DEVICE=cuda:0 python run.py
 ```
 
 Start the Deepgram app with RVC conversion enabled:

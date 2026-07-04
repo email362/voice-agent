@@ -14,6 +14,7 @@ Windows `*:Zone.Identifier` sidecar files are ignored.
 You can override discovery with environment variables:
 
 ```bash
+export RVC_PROJECT_ROOT=/absolute/path/to/project
 export RVC_MODEL_PATH=/absolute/path/to/model.pth
 export RVC_INDEX_PATH=/absolute/path/to/model.index
 export RVC_MODELS_DIR=/absolute/path/to/models
@@ -139,7 +140,8 @@ Start RVC first:
 
 ```bash
 cd rvc-service
-RVC_DEVICE=cuda:0 .venv310/bin/python run.py
+source .venv/bin/activate
+RVC_DEVICE=cuda:0 python run.py
 ```
 
 Then start the Deepgram app from the project root:
