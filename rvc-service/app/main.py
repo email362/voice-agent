@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import tempfile
 from pathlib import Path
@@ -57,6 +58,10 @@ class ConvertUploadLimitMiddleware:
         except RequestTooLarge:
             response = JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
             await response(scope, receive, send)
+
+
+class UploadedAudioTooLarge(Exception):
+    pass
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -117,16 +122,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         input_path = workdir / "input.wav"
         cleanup_required = True
         try:
-            total_bytes = 0
-            with input_path.open("wb") as handle:
-                while True:
-                    chunk = await audio.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total_bytes += len(chunk)
-                    if total_bytes > settings.max_convert_upload_bytes:
-                        raise HTTPException(status_code=413, detail="Uploaded audio is too large")
-                    handle.write(chunk)
+            await audio.seek(0)
+
+            def copy_upload() -> None:
+                total_bytes = 0
+                with input_path.open("wb") as handle:
+                    while True:
+                        chunk = audio.file.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        total_bytes += len(chunk)
+                        if total_bytes > settings.max_convert_upload_bytes:
+                            raise UploadedAudioTooLarge
+                        handle.write(chunk)
+
+            await asyncio.to_thread(copy_upload)
             output_path = await app.state.engine.convert_file(
                 input_path,
                 pitch=pitch,
@@ -134,6 +144,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 f0_method=f0_method,
             )
             cleanup_required = False
+        except UploadedAudioTooLarge:
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise HTTPException(status_code=413, detail="Uploaded audio is too large")
         except RvcBackendUnavailable as exc:
             shutil.rmtree(workdir, ignore_errors=True)
             raise HTTPException(status_code=503, detail=str(exc)) from exc

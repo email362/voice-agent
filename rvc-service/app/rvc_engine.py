@@ -73,13 +73,15 @@ class RvcEngine:
             raise RvcBackendUnavailable(f"rvc-python is not installed or could not be imported: {exc}") from exc
 
         try:
-            backend_kwargs = {"device": self.device_status.effective_device}
+            backend_kwargs = self._filter_supported_kwargs(
+                RVCInference,
+                {"device": self.device_status.effective_device},
+            )
+            rvc = RVCInference(**backend_kwargs)
             load_kwargs: dict[str, Any] = {}
             if self.model_files.index_path:
-                index_path = str(self.model_files.index_path)
-                backend_kwargs["index_path"] = index_path
-                load_kwargs["index_path"] = index_path
-            rvc = RVCInference(**backend_kwargs)
+                load_kwargs["index_path"] = str(self.model_files.index_path)
+            load_kwargs = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
             rvc.load_model(str(self.model_files.model_path), **load_kwargs)
         except Exception as exc:
             raise RvcConversionError(f"Failed to initialize RVC model: {exc}") from exc
@@ -123,8 +125,6 @@ class RvcEngine:
                 "f0method": f0_method,
                 "index_rate": index_rate,
             }
-            if self.model_files.index_path:
-                kwargs["index_path"] = str(self.model_files.index_path)
 
             try:
                 def run_inference() -> None:

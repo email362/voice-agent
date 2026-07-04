@@ -289,6 +289,45 @@ def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path)
     assert seen["load_kwargs"] == {}
 
 
+def test_initialize_backend_passes_index_path_to_supported_loader(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    index_path = tmp_path / "model.index"
+    index_path.write_bytes(b"index")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=index_path, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    seen = {}
+
+    class FakeRVCInference:
+        def __init__(self, device):
+            seen["constructor_kwargs"] = {"device": device}
+
+        def load_model(self, model_path, index_path=None):
+            seen["model_path"] = model_path
+            seen["load_kwargs"] = {"index_path": index_path} if index_path is not None else {}
+
+    infer_module = types.ModuleType("rvc_python.infer")
+    infer_module.RVCInference = FakeRVCInference
+    package_module = types.ModuleType("rvc_python")
+    package_module.infer = infer_module
+    monkeypatch.setitem(sys.modules, "rvc_python", package_module)
+    monkeypatch.setitem(sys.modules, "rvc_python.infer", infer_module)
+
+    backend = engine._initialize_backend()
+
+    assert backend is engine._rvc
+    assert seen["constructor_kwargs"] == {"device": "cpu"}
+    assert seen["model_path"] == str(model_path)
+    assert seen["load_kwargs"] == {"index_path": str(index_path)}
+
+
 def test_load_backend_initialization_runs_off_thread(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles
@@ -430,11 +469,9 @@ def test_convert_file_applies_conversion_parameters(monkeypatch, tmp_path):
         "f0up_key": 3,
         "f0method": "harvest",
         "index_rate": 0.75,
-        "index_path": str(index_path),
     }
     assert seen["infer_file"] == {
         "f0up_key": 3,
         "f0method": "harvest",
         "index_rate": 0.75,
-        "index_path": str(index_path),
     }

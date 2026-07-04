@@ -84,6 +84,13 @@ wss.on('connection', (client) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
   };
 
+  const endConversation = (errorMessage) => {
+    discardAssistantAudioBuffer();
+    if (errorMessage) sendToClient(JSON.stringify({ type: 'ProxyError', description: errorMessage }));
+    if (client.readyState !== WebSocket.CLOSED) client.close(1011, errorMessage || 'Deepgram websocket error');
+    if (deepgram.readyState !== WebSocket.CLOSED) deepgram.close();
+  };
+
   const flushAssistantAudio = async (generation) => {
     if (generation !== assistantAudioGeneration || !assistantAudioChunks.length) return;
     const chunks = assistantAudioChunks;
@@ -148,7 +155,7 @@ wss.on('connection', (client) => {
       await flushAssistantAudio(generation);
     }
   });
-  deepgram.on('error', (error) => sendToClient(JSON.stringify({ type: 'ProxyError', description: error.message })));
+  deepgram.on('error', (error) => endConversation(error.message));
   deepgram.on('close', (code, reason) => {
     sendToClient(JSON.stringify({ type: 'ProxyClosed', code, reason: reason.toString() }));
     if (client.readyState === WebSocket.OPEN) client.close();
