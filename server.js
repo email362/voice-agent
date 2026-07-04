@@ -51,7 +51,6 @@ wss.on('connection', (client) => {
   let assistantAudioChunks = [];
   let assistantAudioBytes = 0;
   let assistantAudioGeneration = 0;
-  let assistantAudioConversionController;
   let assistantAudioFlushRunning = false;
   let assistantAudioFlushQueue = [];
   let rvcDisabledForSession = false;
@@ -61,8 +60,7 @@ wss.on('connection', (client) => {
     assistantAudioBytes = 0;
   };
   const abortAssistantAudioConversion = () => {
-    assistantAudioConversionController?.abort();
-    assistantAudioConversionController = undefined;
+    assistantAudioFlushQueue.forEach((flush) => flush.controller?.abort());
   };
   const discardAssistantAudioBuffer = () => {
     assistantAudioGeneration += 1;
@@ -93,6 +91,34 @@ wss.on('connection', (client) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
   };
 
+  const finalizeAssistantAudioFlush = (flush, convertedAudio = undefined) => {
+    if (flush.generation !== assistantAudioGeneration) return;
+    flush.ready = true;
+    if (convertedAudio) {
+      flush.convertedAudio = convertedAudio;
+      flush.fallbackToOriginal = false;
+    } else {
+      flush.fallbackToOriginal = true;
+    }
+  };
+
+  const emitReadyAssistantAudioFlushes = () => {
+    while (assistantAudioFlushQueue.length) {
+      const flush = assistantAudioFlushQueue[0];
+      if (flush.generation !== assistantAudioGeneration) {
+        assistantAudioFlushQueue.shift();
+        continue;
+      }
+      if (!flush.ready) return;
+      assistantAudioFlushQueue.shift();
+      if (flush.fallbackToOriginal || !flush.convertedAudio) {
+        sendOriginalAssistantAudio(flush.chunks);
+      } else {
+        sendToClient(flush.convertedAudio, true);
+      }
+    }
+  };
+
   const endConversation = (errorMessage) => {
     discardAssistantAudioBuffer();
     if (errorMessage) sendToClient(JSON.stringify({ type: 'ProxyError', description: errorMessage }));
@@ -104,12 +130,13 @@ wss.on('connection', (client) => {
     if (flush.generation !== assistantAudioGeneration || !flush.chunks.length) return;
 
     if (!rvcEnabled()) {
-      sendOriginalAssistantAudio(flush.chunks);
+      finalizeAssistantAudioFlush(flush);
+      emitReadyAssistantAudioFlushes();
       return;
     }
 
     const conversionController = new AbortController();
-    assistantAudioConversionController = conversionController;
+    flush.controller = conversionController;
     try {
       app.log.info({ byteLength: flush.byteLength, serviceUrl: RVC_SERVICE_URL }, 'converting assistant audio with RVC');
       const converted = await convertPcmWithRvc(Buffer.concat(flush.chunks, flush.byteLength), {
@@ -124,28 +151,29 @@ wss.on('connection', (client) => {
         signal: conversionController.signal,
       });
       app.log.info({ inputBytes: flush.byteLength, outputBytes: converted.length }, 'RVC conversion complete');
-      if (flush.generation !== assistantAudioGeneration) return;
-      sendToClient(converted, true);
+      if (flush.generation !== assistantAudioGeneration || conversionController.signal.aborted || !rvcEnabled()) {
+        finalizeAssistantAudioFlush(flush);
+      } else {
+        finalizeAssistantAudioFlush(flush, converted);
+      }
     } catch (error) {
-      if (flush.generation !== assistantAudioGeneration) return;
+      if (flush.generation !== assistantAudioGeneration || conversionController.signal.aborted) return;
       rvcDisabledForSession = true;
       app.log.error({ err: error, byteLength: flush.byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
-      sendOriginalAssistantAudio(flush.chunks);
+      abortAssistantAudioConversion();
+      finalizeAssistantAudioFlush(flush);
     } finally {
-      if (assistantAudioConversionController === conversionController) assistantAudioConversionController = undefined;
+      if (flush.controller === conversionController) flush.controller = undefined;
+      emitReadyAssistantAudioFlushes();
     }
   };
   const drainAssistantAudioFlushQueue = async () => {
     if (assistantAudioFlushRunning) return;
     assistantAudioFlushRunning = true;
     try {
-      while (assistantAudioFlushQueue.length) {
-        const flush = assistantAudioFlushQueue.shift();
-        await processAssistantAudioFlush(flush);
-      }
+      emitReadyAssistantAudioFlushes();
     } finally {
       assistantAudioFlushRunning = false;
-      if (assistantAudioFlushQueue.length) void drainAssistantAudioFlushQueue();
     }
   };
   const queueAssistantAudioFlush = (generation) => {
@@ -154,9 +182,14 @@ wss.on('connection', (client) => {
       generation,
       chunks: assistantAudioChunks,
       byteLength: assistantAudioBytes,
+      ready: false,
+      fallbackToOriginal: false,
+      convertedAudio: undefined,
+      controller: undefined,
     };
     clearAssistantAudioBuffer();
     assistantAudioFlushQueue.push(flush);
+    void processAssistantAudioFlush(flush);
     void drainAssistantAudioFlushQueue();
   };
 

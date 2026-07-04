@@ -48,10 +48,11 @@ const fs = require('node:fs');
   assert.match(server, /let assistantAudioFlushRunning = false;/, 'server should manage assistant audio flushes with a drain loop');
   assert.match(server, /const drainAssistantAudioFlushQueue = async \(\) => \{/, 'server should drain assistant audio flushes through an explicit queue');
   assert.match(server, /assistantAudioFlushQueue\.push\(flush\);/, 'server should queue assistant audio flush snapshots');
+  assert.match(server, /void processAssistantAudioFlush\(flush\);/, 'server should start each assistant flush independently');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
   assert.match(server, /signal: conversionController\.signal/, 'server should pass a cancellation signal into RVC conversion');
   assert.match(server, /abortAssistantAudioConversion\(\);/, 'server should abort in-flight conversion when audio is discarded');
-  assert.match(server, /rvcDisabledForSession = true;[\s\S]*sendOriginalAssistantAudio\(flush\.chunks\);/, 'server should replay the current assistant buffer when falling back from RVC');
+  assert.match(server, /rvcDisabledForSession = true;[\s\S]*finalizeAssistantAudioFlush\(flush\);/, 'server should mark the current assistant buffer for fallback when RVC fails');
   assert.match(server, /flush\.generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(flush\.chunks\)/, 'server should skip stale fallback audio after generation changes');
 
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');

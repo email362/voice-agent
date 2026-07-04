@@ -443,11 +443,14 @@ def test_convert_file_honors_cancellation_during_inference(monkeypatch, tmp_path
     )
 
     infer_started = threading.Event()
+    infer_finished = threading.Event()
+    release = threading.Event()
 
     class Backend:
         def infer_file(self, input_path, output_path, **kwargs):
             infer_started.set()
-            time.sleep(0.5)
+            release.wait(2)
+            infer_finished.set()
             Path(output_path).write_bytes(b"RIFFmockWAVEdata")
 
     backend = Backend()
@@ -470,11 +473,13 @@ def test_convert_file_honors_cancellation_during_inference(monkeypatch, tmp_path
         assert await asyncio.to_thread(infer_started.wait, 2)
         cancelled.set()
         with pytest.raises(asyncio.CancelledError):
-            await task
+            await asyncio.wait_for(task, 1)
+        assert not engine._conversion_lock.locked()
+        assert not infer_finished.is_set()
+        release.set()
+        assert await asyncio.to_thread(infer_finished.wait, 2)
 
     asyncio.run(run_conversion())
-
-    assert not engine._conversion_lock.locked()
 
 
 def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path):

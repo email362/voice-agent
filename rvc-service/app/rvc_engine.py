@@ -203,10 +203,12 @@ class RvcEngine:
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if cancel_task in done:
-                        infer_task.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await infer_task
-                        output_path.unlink(missing_ok=True)
+                        async def cleanup_after_inference() -> None:
+                            with contextlib.suppress(BaseException):
+                                await infer_task
+                            output_path.unlink(missing_ok=True)
+
+                        asyncio.create_task(cleanup_after_inference())
                         raise asyncio.CancelledError
                     cancel_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
