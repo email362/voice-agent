@@ -207,11 +207,11 @@ async function startConversation() {
     if (event.type === 'ConversationText') addTranscript(event.role, event.content);
     if (event.type === 'Error' || event.type === 'ProxyError') setStatus(event.description || 'An error occurred.');
   });
-  conversationSocket.addEventListener('close', () => stopConversation(conversationSocket));
+  conversationSocket.addEventListener('close', () => stopConversation({ closingSocket: conversationSocket, preserveStatus: true }));
   keepAlive = setInterval(() => conversationSocket.readyState === WebSocket.OPEN && conversationSocket.send(JSON.stringify({ type: 'KeepAlive' })), 8000);
 }
 
-function stopConversation(closingSocket) {
+function stopConversation({ closingSocket = socket, preserveStatus = false, statusMessage = 'Stopped.' } = {}) {
   if (closingSocket && socket && closingSocket !== socket) return;
   conversationGeneration += 1;
   clearInterval(keepAlive);
@@ -227,8 +227,8 @@ function stopConversation(closingSocket) {
   audioContext?.close();
   startBtn.disabled = false;
   stopBtn.disabled = true;
-  setStatus('Stopped.');
+  if (!preserveStatus) setStatus(statusMessage);
 }
 
-startBtn.addEventListener('click', () => startConversation().catch((error) => { logEvent({ type: 'BrowserError', description: error.message }); setStatus(error.message); stopConversation(); }));
-stopBtn.addEventListener('click', stopConversation);
+startBtn.addEventListener('click', () => startConversation().catch((error) => { logEvent({ type: 'BrowserError', description: error.message }); setStatus(error.message); stopConversation({ preserveStatus: true }); }));
+stopBtn.addEventListener('click', () => stopConversation());

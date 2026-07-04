@@ -21,10 +21,12 @@ assert.match(app, /try \{[\s\S]*event = JSON\.parse\(message\.data\);[\s\S]*\} c
 assert.match(app, /playbackNodes\.add\(node\)/, 'app.js should track playback nodes for cancellation');
 assert.match(app, /const conversationSocket = new WebSocket\(/, 'app.js should capture the socket instance per conversation');
 assert.match(app, /if \(conversationSocket !== socket\) return;/, 'app.js should ignore stale socket events');
-assert.match(app, /conversationSocket\.addEventListener\('close', \(\) => stopConversation\(conversationSocket\)\);/, 'app.js should close the socket that actually disconnected');
-assert.match(app, /function stopConversation\(closingSocket\)/, 'app.js should accept the socket that triggered shutdown');
+assert.match(app, /conversationSocket\.addEventListener\('close', \(\) => stopConversation\(\{ closingSocket: conversationSocket, preserveStatus: true \}\)\);/, 'app.js should preserve existing close reasons');
+assert.match(app, /function stopConversation\(\{ closingSocket = socket, preserveStatus = false, statusMessage = 'Stopped\.' \} = \{\}\)/, 'app.js should let callers preserve the current status');
+assert.match(app, /if \(!preserveStatus\) setStatus\(statusMessage\);/, 'app.js should only show Stopped\. for explicit stops');
 assert.match(app, /let conversationGeneration = 0;/, 'app.js should track startup generations');
 assert.match(app, /if \(generation !== conversationGeneration\) \{[\s\S]*return;/, 'app.js should abort startup when stop is requested during mic setup');
+assert.match(app, /stopBtn\.addEventListener\('click', \(\) => stopConversation\(\)\);/, 'app.js should stop the conversation from the UI button');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');

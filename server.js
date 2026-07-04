@@ -51,14 +51,20 @@ wss.on('connection', (client) => {
   let assistantAudioChunks = [];
   let assistantAudioBytes = 0;
   let assistantAudioGeneration = 0;
+  let assistantAudioConversionController;
   let rvcDisabledForSession = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
   const clearAssistantAudioBuffer = () => {
     assistantAudioChunks = [];
     assistantAudioBytes = 0;
   };
+  const abortAssistantAudioConversion = () => {
+    assistantAudioConversionController?.abort();
+    assistantAudioConversionController = undefined;
+  };
   const discardAssistantAudioBuffer = () => {
     assistantAudioGeneration += 1;
+    abortAssistantAudioConversion();
     clearAssistantAudioBuffer();
   };
   const logAudioProgress = () => {
@@ -102,6 +108,8 @@ wss.on('connection', (client) => {
       return;
     }
 
+    const conversionController = new AbortController();
+    assistantAudioConversionController = conversionController;
     try {
       app.log.info({ byteLength, serviceUrl: RVC_SERVICE_URL }, 'converting assistant audio with RVC');
       const converted = await convertPcmWithRvc(Buffer.concat(chunks, byteLength), {
@@ -113,6 +121,7 @@ wss.on('connection', (client) => {
         indexRate: RVC_INDEX_RATE,
         f0Method: RVC_F0_METHOD,
         timeoutMs: RVC_TIMEOUT_MS,
+        signal: conversionController.signal,
       });
       app.log.info({ inputBytes: byteLength, outputBytes: converted.length }, 'RVC conversion complete');
       if (generation !== assistantAudioGeneration) return;
@@ -122,6 +131,8 @@ wss.on('connection', (client) => {
       rvcDisabledForSession = true;
       app.log.error({ err: error, byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
       sendOriginalAssistantAudio(chunks);
+    } finally {
+      if (assistantAudioConversionController === conversionController) assistantAudioConversionController = undefined;
     }
   };
 

@@ -5,6 +5,8 @@ const fs = require('node:fs');
   const rvc = require('../rvc-audio');
   assert.equal(typeof rvc.pcm16ToWav, 'function', 'rvc-audio should export pcm16ToWav');
   assert.equal(typeof rvc.convertPcmWithRvc, 'function', 'rvc-audio should export convertPcmWithRvc');
+  const rvcSource = fs.readFileSync('rvc-audio.js', 'utf8');
+  assert.match(rvcSource, /signal\.addEventListener\('abort', abortController, \{ once: true \}\)/, 'RVC helper should bridge caller cancellation to fetch');
 
   const pcm = Buffer.from([0, 0, 255, 127, 0, 128]);
   const wav = rvc.pcm16ToWav(pcm, { sampleRate: 24000, channels: 1, bitsPerSample: 16 });
@@ -44,6 +46,8 @@ const fs = require('node:fs');
   assert.match(server, /process\.env\.RVC_SERVICE_URL \?\? 'http:\/\/127\.0\.0\.1:5055'/, 'server should preserve an empty RVC_SERVICE_URL to disable conversion');
   assert.match(server, /AgentAudioDone/, 'server should flush buffered assistant audio on AgentAudioDone');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
+  assert.match(server, /signal: conversionController\.signal/, 'server should pass a cancellation signal into RVC conversion');
+  assert.match(server, /abortAssistantAudioConversion\(\);/, 'server should abort in-flight conversion when audio is discarded');
   assert.match(server, /generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(chunks\)/, 'server should skip stale fallback audio after generation changes');
 
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');

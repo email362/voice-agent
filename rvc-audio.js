@@ -44,12 +44,21 @@ async function convertPcmWithRvc(pcm, options = {}) {
   const indexRate = options.indexRate ?? 0.5;
   const f0Method = options.f0Method || 'rmvpe';
   const timeoutMs = options.timeoutMs || 120000;
+  const signal = options.signal;
   const wav = pcm16ToWav(pcm, options);
   const url = `${serviceUrl}/convert?pitch=${encodeURIComponent(pitch)}&index_rate=${encodeURIComponent(indexRate)}&f0_method=${encodeURIComponent(f0Method)}`;
   const controller = new AbortController();
+  const abortController = () => controller.abort(signal?.reason);
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    if (signal) {
+      if (signal.aborted) {
+        abortController();
+      } else {
+        signal.addEventListener('abort', abortController, { once: true });
+      }
+    }
     const form = new FormData();
     form.append('audio', new Blob([wav], { type: 'audio/wav' }), 'deepgram-tts.wav');
     const response = await fetch(url, { method: 'POST', body: form, signal: controller.signal });
@@ -60,6 +69,7 @@ async function convertPcmWithRvc(pcm, options = {}) {
     return Buffer.from(await response.arrayBuffer());
   } finally {
     clearTimeout(timeout);
+    if (signal) signal.removeEventListener('abort', abortController);
   }
 }
 
