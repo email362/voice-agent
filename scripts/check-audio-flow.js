@@ -21,7 +21,8 @@ assert.match(app, /try \{[\s\S]*event = JSON\.parse\(message\.data\);[\s\S]*\} c
 assert.match(app, /playbackNodes\.add\(node\)/, 'app.js should track playback nodes for cancellation');
 assert.match(app, /const conversationSocket = new WebSocket\(/, 'app.js should capture the socket instance per conversation');
 assert.match(app, /if \(conversationSocket !== socket\) return;/, 'app.js should ignore stale socket events');
-assert.match(app, /conversationSocket\.addEventListener\('close', \(\) => stopConversation\(\{ closingSocket: conversationSocket, preserveStatus: true \}\)\);/, 'app.js should preserve existing close reasons');
+assert.match(app, /let conversationHadError = false;/, 'app.js should track whether the socket saw an error event');
+assert.match(app, /conversationSocket\.addEventListener\('close', \(\) => \{[\s\S]*if \(conversationSocket === expectedSocketClose\) \{[\s\S]*return;[\s\S]*stopConversation\(\{ closingSocket: conversationSocket, preserveStatus: conversationHadError, statusMessage: 'Disconnected\.' \}\);[\s\S]*\}\);/, 'app.js should clear clean disconnects while preserving error closes');
 assert.match(app, /function stopConversation\(\{ closingSocket = socket, preserveStatus = false, statusMessage = 'Stopped\.' \} = \{\}\)/, 'app.js should let callers preserve the current status');
 assert.match(app, /if \(!preserveStatus\) setStatus\(statusMessage\);/, 'app.js should only show Stopped\. for explicit stops');
 assert.match(app, /let conversationGeneration = 0;/, 'app.js should track startup generations');

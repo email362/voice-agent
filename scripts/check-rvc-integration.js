@@ -62,6 +62,7 @@ const fs = require('node:fs');
   const main = fs.readFileSync('rvc-service/app/main.py', 'utf8');
   assert.match(main, /class ConvertUploadLimitMiddleware/, 'RVC convert endpoint should limit request bodies before multipart parsing');
   assert.match(main, /app\.add_middleware\(ConvertUploadLimitMiddleware, max_request_bytes=settings\.max_convert_upload_bytes \+ 1024 \* 1024\)/, 'RVC convert endpoint should apply the body limit middleware');
+  assert.match(main, /"ok": model_files is not None and backend_available,/, 'RVC health should fail when the backend cannot be imported');
   assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should still enforce an upload size cap');
 
   console.log('rvc integration checks passed');

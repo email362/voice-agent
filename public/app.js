@@ -21,6 +21,8 @@ let outboundAudioBytes = 0;
 let lastAudioStatusAt = 0;
 let playbackGeneration = 0;
 let conversationGeneration = 0;
+let conversationHadError = false;
+let expectedSocketClose;
 
 
 function setStatus(message) { statusEl.textContent = message; }
@@ -159,6 +161,8 @@ async function startConversation() {
   transcriptEl.textContent = '';
   eventsEl.textContent = '';
   canStreamMic = false;
+  conversationHadError = false;
+  expectedSocketClose = undefined;
   outboundAudioFrames = 0;
   outboundAudioBytes = 0;
   lastAudioStatusAt = 0;
@@ -205,9 +209,18 @@ async function startConversation() {
       setStatus('Live. Speak into your microphone.');
     }
     if (event.type === 'ConversationText') addTranscript(event.role, event.content);
-    if (event.type === 'Error' || event.type === 'ProxyError') setStatus(event.description || 'An error occurred.');
+    if (event.type === 'Error' || event.type === 'ProxyError') {
+      conversationHadError = true;
+      setStatus(event.description || 'An error occurred.');
+    }
   });
-  conversationSocket.addEventListener('close', () => stopConversation({ closingSocket: conversationSocket, preserveStatus: true }));
+  conversationSocket.addEventListener('close', () => {
+    if (conversationSocket === expectedSocketClose) {
+      expectedSocketClose = undefined;
+      return;
+    }
+    stopConversation({ closingSocket: conversationSocket, preserveStatus: conversationHadError, statusMessage: 'Disconnected.' });
+  });
   keepAlive = setInterval(() => conversationSocket.readyState === WebSocket.OPEN && conversationSocket.send(JSON.stringify({ type: 'KeepAlive' })), 8000);
 }
 
@@ -220,7 +233,12 @@ function stopConversation({ closingSocket = socket, preserveStatus = false, stat
   stopPlayback();
   const activeSocket = socket;
   socket = undefined;
-  if (activeSocket?.readyState !== WebSocket.CLOSED) activeSocket.close();
+  if (activeSocket?.readyState !== WebSocket.CLOSED) {
+    expectedSocketClose = activeSocket;
+    activeSocket.close();
+  } else if (expectedSocketClose === activeSocket) {
+    expectedSocketClose = undefined;
+  }
   processor?.disconnect();
   source?.disconnect();
   micStream?.getTracks().forEach((track) => track.stop());

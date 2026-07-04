@@ -110,8 +110,11 @@ def test_model_discovery_rejects_invalid_explicit_index_path(tmp_path):
         discover_model_files(settings)
 
 
-def test_health_reports_cuda_default_and_model_status():
+def test_health_reports_cuda_default_and_model_status(monkeypatch):
     from app.main import create_app
+    from app.rvc_engine import RvcEngine
+
+    monkeypatch.setattr(RvcEngine, "backend_available", property(lambda self: True))
 
     client = TestClient(create_app())
     response = client.get("/health")
@@ -123,7 +126,27 @@ def test_health_reports_cuda_default_and_model_status():
     assert body["model"]["loaded"] is True
     assert body["model"]["model_path"].endswith("Glamrock-Freddy_119e_7259s.pth")
     assert body["model"]["index_path"].endswith("added_IVF1243_Flat_nprobe_1_v2.index")
+    assert body["backend"]["available"] is True
     assert "backend" in body
+
+
+def test_health_returns_not_ok_when_backend_unavailable(monkeypatch):
+    from app.main import create_app
+    from app.rvc_engine import RvcEngine
+
+    monkeypatch.setattr(RvcEngine, "backend_available", property(lambda self: False))
+
+    app = create_app()
+    app.state.engine._backend_error = "rvc-python is not installed"
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["backend"]["available"] is False
+    assert body["backend"]["error"] == "rvc-python is not installed"
 
 
 def test_convert_returns_503_when_backend_unavailable(monkeypatch):

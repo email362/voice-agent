@@ -90,7 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health() -> dict:
         backend_available = bool(engine and engine.backend_available)
         return {
-            "ok": model_files is not None,
+            "ok": model_files is not None and backend_available,
             "configured_device": device_status.configured_device,
             "effective_device": device_status.effective_device,
             "cuda_available": device_status.cuda_available,
