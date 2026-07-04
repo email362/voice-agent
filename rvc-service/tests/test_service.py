@@ -1,4 +1,6 @@
 from pathlib import Path
+import asyncio
+import tempfile
 import sys
 
 import pytest
@@ -106,3 +108,40 @@ def test_convert_ignores_client_supplied_filename(tmp_path):
 
     assert response.status_code == 200
     assert seen["input_path"].name == "input.wav"
+
+
+def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcConversionError, RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    class Backend:
+        def infer_file(self, *args, **kwargs):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(engine, "_load_backend", lambda: Backend())
+
+    original_mkstemp = tempfile.mkstemp
+    created = {}
+
+    def fake_mkstemp(*args, **kwargs):
+        fd, path = original_mkstemp(*args, dir=tmp_path, **kwargs)
+        created["path"] = Path(path)
+        return fd, path
+
+    monkeypatch.setattr(tempfile, "mkstemp", fake_mkstemp)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    with pytest.raises(RvcConversionError):
+        asyncio.run(engine.convert_file(input_path))
+
+    assert not created["path"].exists()

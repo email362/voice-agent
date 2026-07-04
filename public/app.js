@@ -19,6 +19,7 @@ let canStreamMic = false;
 let outboundAudioFrames = 0;
 let outboundAudioBytes = 0;
 let lastAudioStatusAt = 0;
+let playbackGeneration = 0;
 
 
 function setStatus(message) { statusEl.textContent = message; }
@@ -98,6 +99,7 @@ async function startMic() {
 }
 
 function stopPlayback() {
+  playbackGeneration += 1;
   playbackNodes.forEach((node) => {
     try {
       node.stop();
@@ -114,7 +116,8 @@ function isWavAudio(arrayBuffer) {
   return String.fromCharCode(...header.slice(0, 4)) === 'RIFF' && String.fromCharCode(...header.slice(8, 12)) === 'WAVE';
 }
 
-function scheduleAudioBuffer(audioBuffer) {
+function scheduleAudioBuffer(audioBuffer, generation = playbackGeneration) {
+  if (generation !== playbackGeneration) return;
   const node = audioContext.createBufferSource();
   node.buffer = audioBuffer;
   playbackNodes.add(node);
@@ -125,25 +128,27 @@ function scheduleAudioBuffer(audioBuffer) {
   nextPlaybackTime = startAt + audioBuffer.duration;
 }
 
-async function playWav(arrayBuffer) {
+async function playWav(arrayBuffer, generation = playbackGeneration) {
   const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-  scheduleAudioBuffer(decoded);
+  if (generation !== playbackGeneration) return;
+  scheduleAudioBuffer(decoded, generation);
 }
 
-function playPcm(arrayBuffer) {
+function playPcm(arrayBuffer, generation = playbackGeneration) {
+  if (generation !== playbackGeneration) return;
   const int16 = new Int16Array(arrayBuffer);
   const audioBuffer = audioContext.createBuffer(1, int16.length, SAMPLE_RATE);
   const channel = audioBuffer.getChannelData(0);
   for (let i = 0; i < int16.length; i += 1) channel[i] = int16[i] / 32768;
-  scheduleAudioBuffer(audioBuffer);
+  scheduleAudioBuffer(audioBuffer, generation);
 }
 
-async function playAudio(arrayBuffer) {
+async function playAudio(arrayBuffer, generation = playbackGeneration) {
   if (isWavAudio(arrayBuffer)) {
-    await playWav(arrayBuffer);
+    await playWav(arrayBuffer, generation);
     return;
   }
-  playPcm(arrayBuffer);
+  playPcm(arrayBuffer, generation);
 }
 
 async function startConversation() {
@@ -162,7 +167,8 @@ async function startConversation() {
   socket.addEventListener('open', () => { setStatus('Connected to proxy. Waiting for Deepgram welcome...'); });
   socket.addEventListener('message', (message) => {
     if (message.data instanceof ArrayBuffer) {
-      playAudio(message.data).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
+      const playbackToken = playbackGeneration;
+      playAudio(message.data, playbackToken).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
       return;
     }
     let event;

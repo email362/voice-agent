@@ -37,12 +37,17 @@ const fs = require('node:fs');
   const app = fs.readFileSync('public/app.js', 'utf8');
   assert.match(app, /function isWavAudio\(/, 'browser should detect WAV payloads');
   assert.match(app, /decodeAudioData/, 'browser should decode WAV payloads');
-  assert.match(app, /playAudio\(message\.data\)/, 'message handler should route binary audio through format-aware playback');
+  assert.match(app, /playAudio\(message\.data, playbackToken\)/, 'message handler should route binary audio through format-aware playback');
 
   const server = fs.readFileSync('server.js', 'utf8');
   assert.match(server, /RVC_SERVICE_URL/, 'server should read RVC_SERVICE_URL');
   assert.match(server, /AgentAudioDone/, 'server should flush buffered assistant audio on AgentAudioDone');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
+  assert.match(server, /generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(chunks\)/, 'server should skip stale fallback audio after generation changes');
+
+  const browser = fs.readFileSync('public/app.js', 'utf8');
+  assert.match(browser, /let playbackGeneration = 0;/, 'browser should track playback generation');
+  assert.match(browser, /decodeAudioData[\s\S]*if \(generation !== playbackGeneration\) return;[\s\S]*scheduleAudioBuffer\(decoded, generation\)/, 'browser should ignore decoded WAVs after barge-in');
 
   console.log('rvc integration checks passed');
 })().catch((error) => {

@@ -111,6 +111,7 @@ wss.on('connection', (client) => {
       if (generation !== assistantAudioGeneration) return;
       sendToClient(converted, true);
     } catch (error) {
+      if (generation !== assistantAudioGeneration) return;
       rvcDisabledForSession = true;
       app.log.error({ err: error, byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
       sendOriginalAssistantAudio(chunks);
