@@ -163,7 +163,9 @@ class RvcEngine:
         cancelled: Callable[[], bool] | None = None,
     ) -> Path:
         _patch_torch_load_for_rvc()
-        async with self._conversion_lock:
+        await self._conversion_lock.acquire()
+        release_lock = True
+        try:
             self._check_cancelled(cancelled)
             rvc = await self._load_backend()
             self._check_cancelled(cancelled)
@@ -207,7 +209,10 @@ class RvcEngine:
                             with contextlib.suppress(BaseException):
                                 await infer_task
                             output_path.unlink(missing_ok=True)
+                            if self._conversion_lock.locked():
+                                self._conversion_lock.release()
 
+                        release_lock = False
                         asyncio.create_task(cleanup_after_inference())
                         raise asyncio.CancelledError
                     cancel_task.cancel()
@@ -224,6 +229,9 @@ class RvcEngine:
                 raise RvcConversionError(f"RVC conversion failed: {exc}") from exc
 
             return output_path
+        finally:
+            if release_lock and self._conversion_lock.locked():
+                self._conversion_lock.release()
 
     @staticmethod
     async def _wait_for_cancellation(cancelled: Callable[[], bool]) -> None:

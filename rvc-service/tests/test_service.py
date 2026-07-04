@@ -444,11 +444,21 @@ def test_convert_file_honors_cancellation_during_inference(monkeypatch, tmp_path
 
     infer_started = threading.Event()
     infer_finished = threading.Event()
+    second_started = threading.Event()
     release = threading.Event()
+    call_count = 0
+    call_lock = threading.Lock()
 
     class Backend:
         def infer_file(self, input_path, output_path, **kwargs):
-            infer_started.set()
+            nonlocal call_count
+            with call_lock:
+                call_count += 1
+                current_call = call_count
+            if current_call == 1:
+                infer_started.set()
+            elif current_call == 2:
+                second_started.set()
             release.wait(2)
             infer_finished.set()
             Path(output_path).write_bytes(b"RIFFmockWAVEdata")
@@ -474,10 +484,16 @@ def test_convert_file_honors_cancellation_during_inference(monkeypatch, tmp_path
         cancelled.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 1)
-        assert not engine._conversion_lock.locked()
+        assert engine._conversion_lock.locked()
+        second = asyncio.create_task(engine.convert_file(input_path))
+        await asyncio.sleep(0.05)
+        assert not second_started.is_set()
+        assert not second.done()
         assert not infer_finished.is_set()
         release.set()
         assert await asyncio.to_thread(infer_finished.wait, 2)
+        await second
+        assert not engine._conversion_lock.locked()
 
     asyncio.run(run_conversion())
 

@@ -157,7 +157,11 @@ wss.on('connection', (client) => {
         finalizeAssistantAudioFlush(flush, converted);
       }
     } catch (error) {
-      if (flush.generation !== assistantAudioGeneration || conversionController.signal.aborted) return;
+      if (flush.generation !== assistantAudioGeneration) return;
+      if (conversionController.signal.aborted) {
+        finalizeAssistantAudioFlush(flush);
+        return;
+      }
       rvcDisabledForSession = true;
       app.log.error({ err: error, byteLength: flush.byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
       abortAssistantAudioConversion();

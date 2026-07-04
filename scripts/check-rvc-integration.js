@@ -52,13 +52,15 @@ const fs = require('node:fs');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
   assert.match(server, /signal: conversionController\.signal/, 'server should pass a cancellation signal into RVC conversion');
   assert.match(server, /abortAssistantAudioConversion\(\);/, 'server should abort in-flight conversion when audio is discarded');
+  assert.match(server, /if \(conversionController\.signal\.aborted\) \{[\s\S]*finalizeAssistantAudioFlush\(flush\);[\s\S]*return;[\s\S]*\}/, 'server should release queued assistant audio when an in-flight conversion is aborted');
   assert.match(server, /rvcDisabledForSession = true;[\s\S]*finalizeAssistantAudioFlush\(flush\);/, 'server should mark the current assistant buffer for fallback when RVC fails');
   assert.match(server, /flush\.generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(flush\.chunks\)/, 'server should skip stale fallback audio after generation changes');
 
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');
   assert.match(engine, /await asyncio\.to_thread\(self\._initialize_backend\)/, 'RVC backend initialization should run off the event loop');
   assert.match(engine, /async with self\._backend_init_lock:/, 'RVC backend initialization should be serialized');
-  assert.match(engine, /async with self\._conversion_lock:/, 'RVC conversions should be serialized per engine instance');
+  assert.match(engine, /await self\._conversion_lock\.acquire\(\)/, 'RVC conversions should hold the engine lock across cancellation cleanup');
+  assert.match(engine, /release_lock = True/, 'RVC conversions should track deferred lock release');
   assert.doesNotMatch(engine, /index_path = str\(self\.model_files\.index_path\) if self\.model_files\.index_path else ''/, 'RVC backend should not force an empty index path');
 
   const browser = fs.readFileSync('public/app.js', 'utf8');
