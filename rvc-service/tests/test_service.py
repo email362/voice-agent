@@ -781,3 +781,62 @@ def test_convert_file_applies_conversion_parameters(monkeypatch, tmp_path):
         "f0method": "harvest",
         "index_rate": 0.75,
     }
+
+
+def test_convert_file_raises_when_set_params_rejects_parameters(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcConversionError, RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    class Backend:
+        def set_params(self, **kwargs):
+            raise TypeError("bad params")
+
+        def infer_file(self, input_path, output_path, **kwargs):
+            pytest.fail("infer_file should not run after set_params fails")
+
+    async def fake_load_backend():
+        return Backend()
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    with pytest.raises(RvcConversionError, match="bad params"):
+        asyncio.run(engine.convert_file(input_path, pitch=3, index_rate=0.75, f0_method="harvest"))
+
+
+def test_convert_file_does_not_mask_infer_file_type_error(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcConversionError, RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    class Backend:
+        def infer_file(self, input_path, output_path, **kwargs):
+            raise TypeError("backend failure")
+
+    async def fake_load_backend():
+        return Backend()
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    with pytest.raises(RvcConversionError, match="backend failure"):
+        asyncio.run(engine.convert_file(input_path, pitch=3, index_rate=0.75, f0_method="harvest"))

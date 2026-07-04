@@ -5,6 +5,7 @@ const fs = require('node:fs');
   const rvc = require('../rvc-audio');
   assert.equal(typeof rvc.pcm16ToWav, 'function', 'rvc-audio should export pcm16ToWav');
   assert.equal(typeof rvc.convertPcmWithRvc, 'function', 'rvc-audio should export convertPcmWithRvc');
+  assert.equal(typeof rvc.RvcConversionTimeoutError, 'function', 'rvc-audio should export RvcConversionTimeoutError');
   const rvcSource = fs.readFileSync('rvc-audio.js', 'utf8');
   assert.match(rvcSource, /signal\.addEventListener\('abort', abortController, \{ once: true \}\)/, 'RVC helper should bridge caller cancellation to fetch');
 
@@ -35,6 +36,20 @@ const fs = require('node:fs');
   global.fetch = originalFetch;
   assert.equal(sawFetch, true);
   assert.deepEqual(result, converted);
+
+  try {
+    global.fetch = async (url, options) => {
+      await new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(options.signal.reason ?? new Error('aborted')), { once: true });
+      });
+    };
+    await assert.rejects(
+      rvc.convertPcmWithRvc(pcm, { serviceUrl: 'http://127.0.0.1:5055', timeoutMs: 1 }),
+      (error) => error instanceof rvc.RvcConversionTimeoutError,
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
 
   const app = fs.readFileSync('public/app.js', 'utf8');
   assert.match(app, /function isWavAudio\(/, 'browser should detect WAV payloads');

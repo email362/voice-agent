@@ -3,7 +3,7 @@ const path = require('node:path');
 const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 const WebSocket = require('ws');
-const { convertPcmWithRvc, isRvcConfigured } = require('./rvc-audio');
+const { convertPcmWithRvc, isRvcConfigured, RvcConversionTimeoutError } = require('./rvc-audio');
 
 const PORT = Number(process.env.PORT || 3000);
 const DEEPGRAM_AGENT_URL = process.env.DEEPGRAM_AGENT_URL || 'wss://agent.deepgram.com/v1/agent/converse';
@@ -158,6 +158,13 @@ wss.on('connection', (client) => {
       }
     } catch (error) {
       if (flush.generation !== assistantAudioGeneration) return;
+      if (error instanceof RvcConversionTimeoutError) {
+        rvcDisabledForSession = true;
+        app.log.error({ err: error, byteLength: flush.byteLength }, 'RVC conversion timed out; falling back to original assistant audio for this session');
+        abortAssistantAudioConversion();
+        finalizeAssistantAudioFlush(flush);
+        return;
+      }
       if (conversionController.signal.aborted) {
         finalizeAssistantAudioFlush(flush);
         return;

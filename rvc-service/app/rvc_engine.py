@@ -94,7 +94,7 @@ class RvcEngine:
             raise RvcBackendUnavailable(f"rvc-python is not installed or could not be imported: {exc}") from exc
 
         try:
-            backend_kwargs = self._filter_supported_kwargs(
+            backend_kwargs, _ = self._filter_supported_kwargs(
                 RVCInference,
                 {"device": self.device_status.effective_device},
             )
@@ -102,7 +102,7 @@ class RvcEngine:
             load_kwargs: dict[str, Any] = {}
             if self.model_files.index_path:
                 load_kwargs["index_path"] = str(self.model_files.index_path)
-            load_kwargs = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
+            load_kwargs, _ = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
             rvc.load_model(str(self.model_files.model_path), **load_kwargs)
         except Exception as exc:
             self._backend_error = str(exc)
@@ -143,15 +143,15 @@ class RvcEngine:
         return True
 
     @staticmethod
-    def _filter_supported_kwargs(callable_obj: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+    def _filter_supported_kwargs(callable_obj: Any, kwargs: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         try:
             signature = inspect.signature(callable_obj)
         except (TypeError, ValueError):
-            return kwargs
+            return kwargs, False
         if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
-            return kwargs
+            return kwargs, True
         accepted = set(signature.parameters)
-        return {key: value for key, value in kwargs.items() if key in accepted}
+        return {key: value for key, value in kwargs.items() if key in accepted}, True
 
     async def convert_file(
         self,
@@ -182,18 +182,17 @@ class RvcEngine:
             try:
                 def run_inference() -> None:
                     self._check_cancelled(cancelled)
-                    filtered_kwargs = self._filter_supported_kwargs(rvc.infer_file, kwargs)
+                    filtered_kwargs, infer_signature_known = self._filter_supported_kwargs(rvc.infer_file, kwargs)
                     set_params = getattr(rvc, "set_params", None)
                     if callable(set_params):
-                        set_params_kwargs = self._filter_supported_kwargs(set_params, kwargs)
+                        set_params_kwargs, _ = self._filter_supported_kwargs(set_params, kwargs)
                         if set_params_kwargs:
-                            try:
-                                set_params(**set_params_kwargs)
-                            except TypeError:
-                                pass
+                            set_params(**set_params_kwargs)
                     try:
                         rvc.infer_file(str(input_path), str(output_path), **filtered_kwargs)
                     except TypeError:
+                        if infer_signature_known:
+                            raise
                         # Some rvc-python versions only accept input/output paths. Keep a working conversion path.
                         rvc.infer_file(str(input_path), str(output_path))
 
