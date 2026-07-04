@@ -39,7 +39,7 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | Static web UI | `public/index.html`, `public/styles.css` | Presents the start/stop controls, agent settings, transcript, and raw event log. | User-editable prompt, greeting, LLM model, voice model, and language fields in the browser. |
 | Browser audio pipeline | `public/app.js` | Requests microphone permission, downsamples mic input to 24 kHz, encodes `linear16` PCM, streams binary frames, and schedules streamed PCM/WAV playback. | `SAMPLE_RATE` is currently fixed at `24000` to match the default Deepgram settings. |
-| Local WebSocket proxy | `server.js` | Accepts browser connections at `/ws/agent`, opens the Deepgram Voice Agent WebSocket, adds server-side auth, buffers assistant audio for optional RVC conversion, and forwards JSON and binary frames in both directions. | `DEEPGRAM_API_KEY`, `DEEPGRAM_AGENT_URL`, `PORT`, `RVC_SERVICE_URL`, and related RVC settings from `.env`. |
+| Local WebSocket proxy | `server.js` | Accepts browser connections at `/ws/agent`, opens the Deepgram Voice Agent WebSocket, adds server-side auth, buffers assistant audio per turn for optional RVC conversion, preserves turn ordering and barge-in suppression, and forwards JSON and binary frames in both directions. | `DEEPGRAM_API_KEY`, `DEEPGRAM_AGENT_URL`, `PORT`, `RVC_SERVICE_URL`, and related RVC settings from `.env`. |
 | Deepgram Voice Agent | External Deepgram platform | Performs speech-to-text/listen, turn-taking, agent orchestration, text-to-speech/speak, and event/audio streaming. | The browser sends the `Settings` message after receiving Deepgram's `Welcome` event. |
 | Think/LLM provider | External provider configured through Deepgram settings | Generates the assistant's response text before Deepgram synthesizes the response audio. | Defaults to `open_ai` with `gpt-4o-mini`; update the UI fields or `buildSettings()` for other providers/models. |
 
@@ -97,7 +97,7 @@ PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" \
   npm start
 ```
 
-The Node proxy buffers assistant PCM audio until Deepgram sends `AgentAudioDone`, posts it to `POST /convert`, then sends the converted WAV to the browser. If RVC fails or times out, it falls back to the original Deepgram audio for that session.
+The Node proxy buffers assistant PCM audio until Deepgram sends `AgentAudioDone`, posts it to `POST /convert`, then sends the converted WAV to the browser. It keeps turn ordering intact while conversion runs and drops stale converted audio if the user barges in again. If RVC fails or times out, it falls back to the original Deepgram audio for that session.
 
 ## Environment variables
 
@@ -111,7 +111,10 @@ See `.env.example` for templates:
 - `RVC_SERVICE_URL` — optional RVC service URL. Defaults to `http://127.0.0.1:5055`; set empty to disable conversion.
 - `RVC_TIMEOUT_MS` — optional RVC conversion timeout in milliseconds. Defaults to `120000`.
 - `RVC_MAX_CONVERT_UPLOAD_BYTES` — optional upload size cap for the RVC service. Defaults to `26214400`.
+- `RVC_DEVICE` — optional RVC service device override. Defaults to `cuda:0`; the service falls back to CPU if CUDA is unavailable.
 - `RVC_PITCH`, `RVC_INDEX_RATE`, `RVC_F0_METHOD` — optional conversion parameters forwarded to the RVC service.
+- `RVC_HOST`, `RVC_PORT` — optional RVC service bind address and port. Defaults are `127.0.0.1` and `5055`.
+- `RVC_PROJECT_ROOT`, `RVC_MODELS_DIR`, `RVC_MODEL_PATH`, `RVC_INDEX_PATH` — optional RVC service model discovery overrides. See [`rvc-service/README.md`](./rvc-service/README.md) for the search order.
 
 ## Notes
 

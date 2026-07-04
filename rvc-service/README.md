@@ -134,7 +134,7 @@ These tests prove:
 
 ## Deepgram App Integration
 
-The Node/Fastify Deepgram app can now call this service after each assistant utterance. The integration buffers Deepgram raw PCM assistant audio until `AgentAudioDone`, wraps it as WAV, posts it to `POST /convert`, preserves event ordering while conversion runs, and sends the converted WAV back to the browser. If conversion fails or times out, the Node app falls back to the original Deepgram audio for that session.
+The Node/Fastify Deepgram app can now call this service after each assistant utterance. The integration buffers Deepgram raw PCM assistant audio until `AgentAudioDone`, wraps it as WAV, posts it to `POST /convert`, preserves event ordering while conversion runs, and suppresses stale converted playback if the user barges in again. If conversion fails or times out, the Node app falls back to the original Deepgram audio for that session.
 
 Start RVC first:
 
@@ -153,11 +153,12 @@ PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" \
   npm start
 ```
 
-Node integration environment variables:
+Service and integration environment variables:
 
 - `RVC_SERVICE_URL` - defaults to `http://127.0.0.1:5055`. Set empty to disable conversion.
 - `RVC_TIMEOUT_MS` - conversion timeout, default `120000`.
 - `RVC_MAX_CONVERT_UPLOAD_BYTES` - upload size cap for `/convert`, default `26214400`.
+- `RVC_DEVICE` - service device override, default `cuda:0`.
 - `RVC_PITCH` - pitch shift passed to `/convert`, default `0`.
 - `RVC_INDEX_RATE` - retrieval index rate, default `0.5`.
 - `RVC_F0_METHOD` - f0 method, default `rmvpe`.
