@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-async def invoke_asgi(app, body_parts):
+async def invoke_asgi(app, body_parts, headers=None):
     messages = []
     parts = list(body_parts)
     index = 0
@@ -39,7 +39,7 @@ async def invoke_asgi(app, body_parts):
         "path": "/convert",
         "raw_path": b"/convert",
         "query_string": b"",
-        "headers": [],
+        "headers": headers or [],
         "client": ("testclient", 123),
         "server": ("testserver", 80),
         "root_path": "",
@@ -201,7 +201,13 @@ def test_convert_rejects_oversized_upload_before_parsing():
     app = create_app(Settings(max_convert_upload_bytes=1))
     app.state.engine.convert_file = lambda *args, **kwargs: pytest.fail("conversion should not run")
 
-    messages = asyncio.run(invoke_asgi(app, [b"a" * 1024 * 1024, b"bb"]))
+    messages = asyncio.run(
+        invoke_asgi(
+            app,
+            [b"a"],
+            headers=[(b"content-length", str(2 * 1024 * 1024).encode("ascii"))],
+        )
+    )
     status = next(message for message in messages if message["type"] == "http.response.start")
     body = next(message for message in messages if message["type"] == "http.response.body")
 
