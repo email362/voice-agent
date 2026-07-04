@@ -234,7 +234,9 @@ def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
     created = {}
 
     def fake_mkstemp(*args, **kwargs):
-        fd, path = original_mkstemp(*args, dir=tmp_path, **kwargs)
+        created["dir"] = kwargs.get("dir")
+        kwargs = {**kwargs, "dir": tmp_path}
+        fd, path = original_mkstemp(*args, **kwargs)
         created["path"] = Path(path)
         return fd, path
 
@@ -246,6 +248,7 @@ def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
     with pytest.raises(RvcConversionError):
         asyncio.run(engine.convert_file(input_path))
 
+    assert created["dir"] == input_path.parent
     assert not created["path"].exists()
 
 

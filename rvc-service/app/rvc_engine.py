@@ -114,7 +114,7 @@ class RvcEngine:
         _patch_torch_load_for_rvc()
         async with self._conversion_lock:
             rvc = await self._load_backend()
-            output_fd, output_name = tempfile.mkstemp(suffix=".wav")
+            output_fd, output_name = tempfile.mkstemp(dir=input_path.parent, suffix=".wav")
             os.close(output_fd)
             output_path = Path(output_name)
 

@@ -24,33 +24,39 @@ class ConvertUploadLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        body = bytearray()
-        while True:
+        content_length = next(
+            (
+                int(value.decode("latin1"))
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"content-length" and value.isdigit()
+            ),
+            None,
+        )
+        if content_length is not None and content_length > self.max_request_bytes:
+            response = JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
+            await response(scope, receive, send)
+            return
+
+        class RequestTooLarge(Exception):
+            pass
+
+        total_bytes = 0
+
+        async def limited_receive():
+            nonlocal total_bytes
             message = await receive()
             if message["type"] != "http.request":
-                await self.app(scope, receive, send)
-                return
+                return message
+            total_bytes += len(message.get("body", b""))
+            if total_bytes > self.max_request_bytes:
+                raise RequestTooLarge
+            return message
 
-            body.extend(message.get("body", b""))
-            if len(body) > self.max_request_bytes:
-                response = JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
-                await response(scope, receive, send)
-                return
-
-            if not message.get("more_body", False):
-                break
-
-        buffered_body = bytes(body)
-        body_sent = False
-
-        async def replay_receive():
-            nonlocal body_sent
-            if body_sent:
-                return {"type": "http.request", "body": b"", "more_body": False}
-            body_sent = True
-            return {"type": "http.request", "body": buffered_body, "more_body": False}
-
-        await self.app(scope, replay_receive, send)
+        try:
+            await self.app(scope, limited_receive, send)
+        except RequestTooLarge:
+            response = JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
+            await response(scope, receive, send)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
