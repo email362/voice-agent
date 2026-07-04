@@ -175,6 +175,53 @@ def test_health_returns_not_ok_when_backend_initialization_fails(monkeypatch):
     assert body["backend"]["error"] == "Failed to initialize RVC model: boom"
 
 
+def test_health_serializes_backend_initialization(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "voice.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[tmp_path]),
+        DeviceStatus(
+            configured_device="cuda:0",
+            effective_device="cuda:0",
+            cuda_available=True,
+            fallback_reason=None,
+        ),
+    )
+
+    init_calls = 0
+    init_lock = threading.Lock()
+    first_init_started = threading.Event()
+    release_first_init = threading.Event()
+
+    def fake_initialize_backend(self):
+        nonlocal init_calls
+        with init_lock:
+            init_calls += 1
+        first_init_started.set()
+        assert release_first_init.wait(timeout=2), "backend initialization should be released by the test"
+        self._rvc = object()
+        return self._rvc
+
+    monkeypatch.setattr(RvcEngine, "_initialize_backend", fake_initialize_backend)
+
+    async def run_concurrent_health_checks():
+        task1 = asyncio.create_task(engine.ensure_ready())
+        task2 = asyncio.create_task(engine.ensure_ready())
+        assert await asyncio.to_thread(first_init_started.wait, 2)
+        await asyncio.sleep(0.05)
+        assert init_calls == 1
+        release_first_init.set()
+        assert await asyncio.gather(task1, task2) == [True, True]
+
+    asyncio.run(run_concurrent_health_checks())
+
+    assert init_calls == 1
+
+
 def test_convert_returns_503_when_backend_unavailable(monkeypatch):
     from app.main import create_app
     from app.rvc_engine import RvcBackendUnavailable

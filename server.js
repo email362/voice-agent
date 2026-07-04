@@ -132,6 +132,7 @@ wss.on('connection', (client) => {
       rvcDisabledForSession = true;
       app.log.error({ err: error, byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
       sendOriginalAssistantAudio(chunks);
+      discardAssistantAudioBuffer();
     } finally {
       if (assistantAudioConversionController === conversionController) assistantAudioConversionController = undefined;
     }
