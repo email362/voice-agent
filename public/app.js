@@ -162,10 +162,15 @@ async function startConversation() {
   lastAudioStatusAt = 0;
   setMicState('connecting', 'Mic warming up');
   await startMic();
-  socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`);
-  socket.binaryType = 'arraybuffer';
-  socket.addEventListener('open', () => { setStatus('Connected to proxy. Waiting for Deepgram welcome...'); });
-  socket.addEventListener('message', (message) => {
+  const conversationSocket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`);
+  socket = conversationSocket;
+  conversationSocket.binaryType = 'arraybuffer';
+  conversationSocket.addEventListener('open', () => {
+    if (conversationSocket !== socket) return;
+    setStatus('Connected to proxy. Waiting for Deepgram welcome...');
+  });
+  conversationSocket.addEventListener('message', (message) => {
+    if (conversationSocket !== socket) return;
     if (message.data instanceof ArrayBuffer) {
       const playbackToken = playbackGeneration;
       playAudio(message.data, playbackToken).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
@@ -179,7 +184,7 @@ async function startConversation() {
     }
     logEvent(event);
     if (event.type === 'UserStartedSpeaking') stopPlayback();
-    if (event.type === 'Welcome') socket.send(JSON.stringify(buildSettings()));
+    if (event.type === 'Welcome') conversationSocket.send(JSON.stringify(buildSettings()));
     if (event.type === 'SettingsApplied') {
       canStreamMic = true;
       setMicState('live', 'Mic live');
@@ -188,11 +193,12 @@ async function startConversation() {
     if (event.type === 'ConversationText') addTranscript(event.role, event.content);
     if (event.type === 'Error' || event.type === 'ProxyError') setStatus(event.description || 'An error occurred.');
   });
-  socket.addEventListener('close', stopConversation);
-  keepAlive = setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send(JSON.stringify({ type: 'KeepAlive' })), 8000);
+  conversationSocket.addEventListener('close', () => stopConversation(conversationSocket));
+  keepAlive = setInterval(() => conversationSocket.readyState === WebSocket.OPEN && conversationSocket.send(JSON.stringify({ type: 'KeepAlive' })), 8000);
 }
 
-function stopConversation() {
+function stopConversation(closingSocket) {
+  if (closingSocket && socket && closingSocket !== socket) return;
   clearInterval(keepAlive);
   canStreamMic = false;
   setMicState('idle', 'Mic idle');

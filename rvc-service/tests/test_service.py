@@ -3,6 +3,8 @@ import asyncio
 import tempfile
 import sys
 import types
+import threading
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -111,6 +113,23 @@ def test_convert_ignores_client_supplied_filename(tmp_path):
     assert seen["input_path"].name == "input.wav"
 
 
+def test_convert_rejects_oversized_upload(tmp_path):
+    from app.config import Settings
+    from app.main import create_app
+
+    app = create_app(Settings(max_convert_upload_bytes=4))
+    app.state.engine.convert_file = lambda *args, **kwargs: pytest.fail("conversion should not run")
+    client = TestClient(app)
+
+    response = client.post(
+        "/convert",
+        files={"audio": ("input.wav", b"012345", "audio/wav")},
+    )
+
+    assert response.status_code == 413
+    assert "too large" in response.json()["detail"]
+
+
 def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles
@@ -127,7 +146,10 @@ def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
         def infer_file(self, *args, **kwargs):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(engine, "_load_backend", lambda: Backend())
+    async def fake_load_backend():
+        return Backend()
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
 
     original_mkstemp = tempfile.mkstemp
     created = {}
@@ -222,3 +244,67 @@ def test_load_backend_initialization_runs_off_thread(monkeypatch, tmp_path):
 
     assert backend is engine._rvc
     assert calls == ["_initialize_backend"]
+
+
+def test_convert_file_serializes_backend_usage(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    class Backend:
+        def infer_file(self, input_path, output_path, **kwargs):
+            time.sleep(0.2)
+            Path(output_path).write_bytes(b"RIFFmockWAVEdata")
+
+    backend = Backend()
+    async def fake_load_backend():
+        return backend
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    started = threading.Event()
+    release = threading.Event()
+    active_calls = 0
+    max_active_calls = 0
+    lock = threading.Lock()
+
+    async def gated_to_thread(func, *args, **kwargs):
+        nonlocal active_calls, max_active_calls
+        with lock:
+            active_calls += 1
+            max_active_calls = max(max_active_calls, active_calls)
+        started.set()
+        while not release.is_set():
+            await asyncio.sleep(0.01)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            with lock:
+                active_calls -= 1
+
+    monkeypatch.setattr(asyncio, "to_thread", gated_to_thread)
+
+    async def run_two_conversions():
+        first = asyncio.create_task(engine.convert_file(input_path))
+        for _ in range(100):
+            if started.is_set():
+                break
+            await asyncio.sleep(0.01)
+        second = asyncio.create_task(engine.convert_file(input_path))
+        await asyncio.sleep(0.05)
+        assert max_active_calls == 1
+        release.set()
+        await first
+        await second
+
+    asyncio.run(run_two_conversions())

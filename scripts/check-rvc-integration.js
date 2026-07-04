@@ -47,11 +47,15 @@ const fs = require('node:fs');
 
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');
   assert.match(engine, /await asyncio\.to_thread\(self\._initialize_backend\)/, 'RVC backend initialization should run off the event loop');
+  assert.match(engine, /async with self\._conversion_lock:/, 'RVC conversions should be serialized per engine instance');
   assert.doesNotMatch(engine, /index_path = str\(self\.model_files\.index_path\) if self\.model_files\.index_path else ''/, 'RVC backend should not force an empty index path');
 
   const browser = fs.readFileSync('public/app.js', 'utf8');
   assert.match(browser, /let playbackGeneration = 0;/, 'browser should track playback generation');
   assert.match(browser, /decodeAudioData[\s\S]*if \(generation !== playbackGeneration\) return;[\s\S]*scheduleAudioBuffer\(decoded, generation\)/, 'browser should ignore decoded WAVs after barge-in');
+
+  const main = fs.readFileSync('rvc-service/app/main.py', 'utf8');
+  assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should enforce an upload size cap');
 
   console.log('rvc integration checks passed');
 })().catch((error) => {

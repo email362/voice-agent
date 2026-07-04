@@ -45,6 +45,7 @@ class RvcEngine:
         self.device_status = device_status
         self._backend_error: str | None = None
         self._rvc: Any | None = None
+        self._conversion_lock = asyncio.Lock()
 
     @property
     def backend_available(self) -> bool:
@@ -100,33 +101,34 @@ class RvcEngine:
         f0_method: str = "rmvpe",
     ) -> Path:
         _patch_torch_load_for_rvc()
-        rvc = await self._load_backend()
-        output_fd, output_name = tempfile.mkstemp(suffix=".wav")
-        os.close(output_fd)
-        output_path = Path(output_name)
+        async with self._conversion_lock:
+            rvc = await self._load_backend()
+            output_fd, output_name = tempfile.mkstemp(suffix=".wav")
+            os.close(output_fd)
+            output_path = Path(output_name)
 
-        kwargs = {
-            "f0up_key": pitch,
-            "f0method": f0_method,
-            "index_rate": index_rate,
-        }
-        if self.model_files.index_path:
-            kwargs["index_path"] = str(self.model_files.index_path)
+            kwargs = {
+                "f0up_key": pitch,
+                "f0method": f0_method,
+                "index_rate": index_rate,
+            }
+            if self.model_files.index_path:
+                kwargs["index_path"] = str(self.model_files.index_path)
 
-        try:
-            def run_inference() -> None:
-                signature = inspect.signature(rvc.infer_file)
-                accepted = set(signature.parameters)
-                filtered_kwargs = {key: value for key, value in kwargs.items() if key in accepted}
-                try:
-                    rvc.infer_file(str(input_path), str(output_path), **filtered_kwargs)
-                except TypeError:
-                    # Some rvc-python versions only accept input/output paths. Keep a working conversion path.
-                    rvc.infer_file(str(input_path), str(output_path))
+            try:
+                def run_inference() -> None:
+                    signature = inspect.signature(rvc.infer_file)
+                    accepted = set(signature.parameters)
+                    filtered_kwargs = {key: value for key, value in kwargs.items() if key in accepted}
+                    try:
+                        rvc.infer_file(str(input_path), str(output_path), **filtered_kwargs)
+                    except TypeError:
+                        # Some rvc-python versions only accept input/output paths. Keep a working conversion path.
+                        rvc.infer_file(str(input_path), str(output_path))
 
-            await asyncio.to_thread(run_inference)
-        except Exception as exc:
-            output_path.unlink(missing_ok=True)
-            raise RvcConversionError(f"RVC conversion failed: {exc}") from exc
+                await asyncio.to_thread(run_inference)
+            except Exception as exc:
+                output_path.unlink(missing_ok=True)
+                raise RvcConversionError(f"RVC conversion failed: {exc}") from exc
 
-        return output_path
+            return output_path

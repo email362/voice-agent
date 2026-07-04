@@ -19,7 +19,10 @@ assert.match(app, /setMicState\('streaming', `Mic streaming \(\$\{outboundAudioF
 assert.match(app, /event\.type === 'UserStartedSpeaking'[\s\S]*stopPlayback\(\)/, 'app.js should stop queued playback when Deepgram hears the user');
 assert.match(app, /try \{[\s\S]*event = JSON\.parse\(message\.data\);[\s\S]*\} catch \{[\s\S]*return;[\s\S]*\}/, 'app.js should ignore unexpected non-JSON text frames');
 assert.match(app, /playbackNodes\.add\(node\)/, 'app.js should track playback nodes for cancellation');
-assert.match(app, /const activeSocket = socket;[\s\S]*if \(activeSocket\?\.readyState !== WebSocket\.CLOSED\) activeSocket\.close\(\);/, 'app.js should close connecting sockets when stopping');
+assert.match(app, /const conversationSocket = new WebSocket\(/, 'app.js should capture the socket instance per conversation');
+assert.match(app, /if \(conversationSocket !== socket\) return;/, 'app.js should ignore stale socket events');
+assert.match(app, /conversationSocket\.addEventListener\('close', \(\) => stopConversation\(conversationSocket\)\);/, 'app.js should close the socket that actually disconnected');
+assert.match(app, /function stopConversation\(closingSocket\)/, 'app.js should accept the socket that triggered shutdown');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');

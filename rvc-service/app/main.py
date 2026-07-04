@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
 from .config import Settings
@@ -33,6 +33,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.model_error = model_error
     app.state.device_status = device_status
     app.state.engine = engine
+
+    @app.middleware("http")
+    async def limit_convert_request_size(request, call_next):
+        if request.method == "POST" and request.url.path == "/convert":
+            content_length = request.headers.get("content-length")
+            if content_length is not None:
+                try:
+                    request_size = int(content_length)
+                except ValueError:
+                    request_size = None
+                else:
+                    if request_size > settings.max_convert_upload_bytes + 1024 * 1024:
+                        return JSONResponse(status_code=413, content={"detail": "Uploaded audio is too large"})
+        return await call_next(request)
 
     @app.get("/health")
     async def health() -> dict:
@@ -68,21 +82,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         workdir = Path(tempfile.mkdtemp(prefix="rvc-service-"))
         input_path = workdir / "input.wav"
+        cleanup_required = True
         try:
+            total_bytes = 0
             with input_path.open("wb") as handle:
-                shutil.copyfileobj(audio.file, handle)
+                while True:
+                    chunk = await audio.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > settings.max_convert_upload_bytes:
+                        raise HTTPException(status_code=413, detail="Uploaded audio is too large")
+                    handle.write(chunk)
             output_path = await app.state.engine.convert_file(
                 input_path,
                 pitch=pitch,
                 index_rate=index_rate,
                 f0_method=f0_method,
             )
+            cleanup_required = False
         except RvcBackendUnavailable as exc:
             shutil.rmtree(workdir, ignore_errors=True)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except RvcConversionError as exc:
             shutil.rmtree(workdir, ignore_errors=True)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            if cleanup_required:
+                shutil.rmtree(workdir, ignore_errors=True)
 
         def cleanup() -> None:
             shutil.rmtree(workdir, ignore_errors=True)

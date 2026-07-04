@@ -108,6 +108,7 @@ See `.env.example` for templates:
 - `PORT` — optional local server port.
 - `RVC_SERVICE_URL` — optional RVC service URL. Defaults to `http://127.0.0.1:5055`; set empty to disable conversion.
 - `RVC_TIMEOUT_MS` — optional RVC conversion timeout in milliseconds. Defaults to `120000`.
+- `RVC_MAX_CONVERT_UPLOAD_BYTES` — optional upload size cap for the RVC service. Defaults to `26214400`.
 - `RVC_PITCH`, `RVC_INDEX_RATE`, `RVC_F0_METHOD` — optional conversion parameters forwarded to the RVC service.
 
 ## Notes

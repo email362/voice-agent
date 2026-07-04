@@ -156,6 +156,7 @@ Node integration environment variables:
 
 - `RVC_SERVICE_URL` - defaults to `http://127.0.0.1:5055`. Set empty to disable conversion.
 - `RVC_TIMEOUT_MS` - conversion timeout, default `120000`.
+- `RVC_MAX_CONVERT_UPLOAD_BYTES` - upload size cap for `/convert`, default `26214400`.
 - `RVC_PITCH` - pitch shift passed to `/convert`, default `0`.
 - `RVC_INDEX_RATE` - retrieval index rate, default `0.5`.
 - `RVC_F0_METHOD` - f0 method, default `rmvpe`.
