@@ -24,6 +24,7 @@ let playbackGeneration = 0;
 let conversationGeneration = 0;
 let conversationHadError = false;
 let expectedSocketClose;
+let assistantPlaybackSuppressed = false;
 
 
 function setStatus(message) { statusEl.textContent = message; }
@@ -203,6 +204,7 @@ async function startConversation() {
   conversationSocket.addEventListener('message', (message) => {
     if (conversationSocket !== socket) return;
     if (message.data instanceof ArrayBuffer) {
+      if (assistantPlaybackSuppressed) return;
       const playbackToken = playbackGeneration;
       queuePlayback(message.data, playbackToken).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
       return;
@@ -214,13 +216,17 @@ async function startConversation() {
       return;
     }
     logEvent(event);
-    if (event.type === 'UserStartedSpeaking') stopPlayback();
+    if (event.type === 'UserStartedSpeaking') {
+      assistantPlaybackSuppressed = true;
+      stopPlayback();
+    }
     if (event.type === 'Welcome') conversationSocket.send(JSON.stringify(buildSettings()));
     if (event.type === 'SettingsApplied') {
       canStreamMic = true;
       setMicState('live', 'Mic live');
       setStatus('Live. Speak into your microphone.');
     }
+    if (event.type === 'AgentAudioDone') assistantPlaybackSuppressed = false;
     if (event.type === 'ConversationText') addTranscript(event.role, event.content);
     if (event.type === 'Error' || event.type === 'ProxyError') {
       conversationHadError = true;
@@ -242,6 +248,7 @@ function stopConversation({ closingSocket = socket, preserveStatus = false, stat
   conversationGeneration += 1;
   clearInterval(keepAlive);
   canStreamMic = false;
+  assistantPlaybackSuppressed = false;
   setMicState('idle', 'Mic idle');
   stopPlayback();
   const activeSocket = socket;

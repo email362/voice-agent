@@ -53,6 +53,7 @@ wss.on('connection', (client) => {
   let assistantAudioGeneration = 0;
   let assistantAudioFlushRunning = false;
   let assistantAudioFlushQueue = [];
+  let assistantAudioSuppressed = false;
   let rvcDisabledForSession = false;
   let deepgramClosed = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
@@ -64,6 +65,7 @@ wss.on('connection', (client) => {
     assistantAudioFlushQueue.forEach((flush) => flush.controller?.abort());
   };
   const discardAssistantAudioBuffer = () => {
+    assistantAudioSuppressed = true;
     assistantAudioGeneration += 1;
     abortAssistantAudioConversion();
     assistantAudioFlushQueue = [];
@@ -96,7 +98,9 @@ wss.on('connection', (client) => {
     if (deepgram.readyState === WebSocket.OPEN) deepgram.send(data, { binary: isBinary });
   };
   const shouldBufferAssistantAudio = () =>
-    rvcEnabled() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning;
+    !assistantAudioSuppressed && (
+      rvcEnabled() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning
+    );
 
   const sendOriginalAssistantAudio = (chunks) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
@@ -219,6 +223,7 @@ wss.on('connection', (client) => {
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));
   deepgram.on('message', async (data, isBinary) => {
     if (isBinary) {
+      if (assistantAudioSuppressed) return;
       if (shouldBufferAssistantAudio()) {
         const chunk = Buffer.from(data);
         assistantAudioChunks.push(chunk);
@@ -242,6 +247,7 @@ wss.on('connection', (client) => {
     sendToClient(data, false);
     if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
     if (event.type === 'AgentAudioDone') {
+      assistantAudioSuppressed = false;
       const generation = assistantAudioGeneration;
       void queueAssistantAudioFlush(generation);
     }
