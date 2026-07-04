@@ -243,6 +243,28 @@ def test_convert_returns_503_when_backend_unavailable(monkeypatch):
     assert "rvc-python is not installed" in response.json()["detail"]
 
 
+def test_convert_rejects_client_disconnect_before_conversion(monkeypatch):
+    from app.main import create_app
+    from starlette.requests import Request
+
+    app = create_app()
+    app.state.engine.convert_file = lambda *args, **kwargs: pytest.fail("conversion should not run")
+
+    async def disconnected(self):
+        return True
+
+    monkeypatch.setattr(Request, "is_disconnected", disconnected)
+    client = TestClient(app)
+
+    response = client.post(
+        "/convert",
+        files={"audio": ("input.wav", b"RIFF....WAVEfmt ", "audio/wav")},
+    )
+
+    assert response.status_code == 499
+    assert response.json()["detail"] == "Client disconnected"
+
+
 def test_convert_returns_wav_from_engine(tmp_path):
     from app.main import create_app
 
@@ -370,6 +392,42 @@ def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
 
     assert created["dir"] == input_path.parent
     assert not created["path"].exists()
+
+
+def test_convert_file_honors_cancellation_before_inference(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    backend = types.SimpleNamespace(infer_file=pytest.fail)
+    loaded = False
+
+    async def fake_load_backend():
+        nonlocal loaded
+        loaded = True
+        return backend
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    cancel_states = iter([False, True])
+
+    def cancelled():
+        return next(cancel_states, True)
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(engine.convert_file(input_path, cancelled=cancelled))
+
+    assert loaded is True
 
 
 def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path):

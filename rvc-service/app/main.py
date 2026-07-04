@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
@@ -111,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/convert")
     async def convert(
+        request: Request,
         audio: UploadFile = File(...),
         pitch: int = Query(0, ge=-24, le=24),
         index_rate: float = Query(0.5, ge=0.0, le=1.0),
@@ -119,10 +120,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if app.state.engine is None:
             raise HTTPException(status_code=503, detail=app.state.model_error or "RVC model is not loaded")
 
+        async def ensure_connected() -> None:
+            if await request.is_disconnected():
+                raise HTTPException(status_code=499, detail="Client disconnected")
+
+        disconnect_cancelled = asyncio.Event()
+
+        async def watch_disconnect() -> None:
+            while not disconnect_cancelled.is_set():
+                if await request.is_disconnected():
+                    disconnect_cancelled.set()
+                    return
+                await asyncio.sleep(0.1)
+
+        disconnect_watcher = asyncio.create_task(watch_disconnect())
+
         workdir = Path(tempfile.mkdtemp(prefix="rvc-service-"))
         input_path = workdir / "input.wav"
         cleanup_required = True
         try:
+            await ensure_connected()
             await audio.seek(0)
 
             def copy_upload() -> None:
@@ -138,16 +155,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         handle.write(chunk)
 
             await asyncio.to_thread(copy_upload)
+            await ensure_connected()
+            if disconnect_cancelled.is_set():
+                raise HTTPException(status_code=499, detail="Client disconnected")
             output_path = await app.state.engine.convert_file(
                 input_path,
                 pitch=pitch,
                 index_rate=index_rate,
                 f0_method=f0_method,
+                cancelled=disconnect_cancelled.is_set,
             )
             cleanup_required = False
         except UploadedAudioTooLarge:
             shutil.rmtree(workdir, ignore_errors=True)
             raise HTTPException(status_code=413, detail="Uploaded audio is too large")
+        except asyncio.CancelledError:
+            shutil.rmtree(workdir, ignore_errors=True)
+            raise HTTPException(status_code=499, detail="Client disconnected")
         except RvcBackendUnavailable as exc:
             shutil.rmtree(workdir, ignore_errors=True)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -155,6 +179,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             shutil.rmtree(workdir, ignore_errors=True)
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         finally:
+            disconnect_cancelled.set()
+            disconnect_watcher.cancel()
+            try:
+                await disconnect_watcher
+            except asyncio.CancelledError:
+                pass
             if cleanup_required:
                 shutil.rmtree(workdir, ignore_errors=True)
 

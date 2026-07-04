@@ -14,6 +14,7 @@ let source;
 let processor;
 let nextPlaybackTime = 0;
 let playbackNodes = new Set();
+let playbackQueue = Promise.resolve();
 let keepAlive;
 let canStreamMic = false;
 let outboundAudioFrames = 0;
@@ -103,6 +104,7 @@ async function startMic() {
 
 function stopPlayback() {
   playbackGeneration += 1;
+  playbackQueue = Promise.resolve();
   playbackNodes.forEach((node) => {
     try {
       node.stop();
@@ -154,6 +156,17 @@ async function playAudio(arrayBuffer, generation = playbackGeneration) {
   playPcm(arrayBuffer, generation);
 }
 
+function queuePlayback(arrayBuffer, generation = playbackGeneration) {
+  const queued = playbackQueue
+    .catch(() => {})
+    .then(async () => {
+      if (generation !== playbackGeneration) return;
+      await playAudio(arrayBuffer, generation);
+    });
+  playbackQueue = queued;
+  return queued;
+}
+
 async function startConversation() {
   const generation = ++conversationGeneration;
   startBtn.disabled = true;
@@ -191,7 +204,7 @@ async function startConversation() {
     if (conversationSocket !== socket) return;
     if (message.data instanceof ArrayBuffer) {
       const playbackToken = playbackGeneration;
-      playAudio(message.data, playbackToken).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
+      queuePlayback(message.data, playbackToken).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
       return;
     }
     let event;

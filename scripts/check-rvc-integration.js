@@ -39,7 +39,7 @@ const fs = require('node:fs');
   const app = fs.readFileSync('public/app.js', 'utf8');
   assert.match(app, /function isWavAudio\(/, 'browser should detect WAV payloads');
   assert.match(app, /decodeAudioData/, 'browser should decode WAV payloads');
-  assert.match(app, /playAudio\(message\.data, playbackToken\)/, 'message handler should route binary audio through format-aware playback');
+  assert.match(app, /queuePlayback\(message\.data, playbackToken\)/, 'message handler should route binary audio through serialized, format-aware playback');
 
   const server = fs.readFileSync('server.js', 'utf8');
   assert.match(server, /RVC_SERVICE_URL/, 'server should read RVC_SERVICE_URL');
@@ -66,6 +66,8 @@ const fs = require('node:fs');
   const main = fs.readFileSync('rvc-service/app/main.py', 'utf8');
   assert.match(main, /class ConvertUploadLimitMiddleware/, 'RVC convert endpoint should limit request bodies before multipart parsing');
   assert.match(main, /app\.add_middleware\(ConvertUploadLimitMiddleware, max_request_bytes=settings\.max_convert_upload_bytes \+ 1024 \* 1024\)/, 'RVC convert endpoint should apply the body limit middleware');
+  assert.match(main, /if await request\.is_disconnected\(\):/, 'RVC convert endpoint should check for client disconnects before conversion');
+  assert.match(main, /cancelled=disconnect_cancelled\.is_set/, 'RVC convert endpoint should pass disconnect state into conversion');
   assert.match(main, /backend_ready = bool\(engine and await engine\.ensure_ready\(\)\)/, 'RVC health should initialize the backend before reporting readiness');
   assert.match(main, /"ok": model_files is not None and backend_ready,/, 'RVC health should fail when the backend cannot be initialized');
   assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should still enforce an upload size cap');

@@ -5,7 +5,7 @@ import inspect
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .device import DeviceStatus
 from .model_discovery import ModelFiles
@@ -129,6 +129,11 @@ class RvcEngine:
                 self._backend_failure = exc
                 raise
 
+    @staticmethod
+    def _check_cancelled(cancelled: Callable[[], bool] | None) -> None:
+        if cancelled and cancelled():
+            raise asyncio.CancelledError
+
     async def ensure_ready(self) -> bool:
         try:
             await self._load_backend()
@@ -154,10 +159,13 @@ class RvcEngine:
         pitch: int = 0,
         index_rate: float = 0.5,
         f0_method: str = "rmvpe",
+        cancelled: Callable[[], bool] | None = None,
     ) -> Path:
         _patch_torch_load_for_rvc()
         async with self._conversion_lock:
+            self._check_cancelled(cancelled)
             rvc = await self._load_backend()
+            self._check_cancelled(cancelled)
             output_fd, output_name = tempfile.mkstemp(dir=input_path.parent, suffix=".wav")
             os.close(output_fd)
             output_path = Path(output_name)
@@ -170,6 +178,7 @@ class RvcEngine:
 
             try:
                 def run_inference() -> None:
+                    self._check_cancelled(cancelled)
                     filtered_kwargs = self._filter_supported_kwargs(rvc.infer_file, kwargs)
                     set_params = getattr(rvc, "set_params", None)
                     if callable(set_params):
@@ -186,6 +195,9 @@ class RvcEngine:
                         rvc.infer_file(str(input_path), str(output_path))
 
                 await asyncio.to_thread(run_inference)
+            except asyncio.CancelledError:
+                output_path.unlink(missing_ok=True)
+                raise
             except Exception as exc:
                 output_path.unlink(missing_ok=True)
                 raise RvcConversionError(f"RVC conversion failed: {exc}") from exc
