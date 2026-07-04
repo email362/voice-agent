@@ -36,6 +36,18 @@ def _candidate_dirs(settings: Settings) -> list[Path]:
     return unique
 
 
+def _index_candidate_dirs(settings: Settings, model_path: Path) -> list[Path]:
+    dirs = [model_path.parent, *_candidate_dirs(settings)]
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for directory in dirs:
+        resolved = directory.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
 def discover_model_files(settings: Settings) -> ModelFiles:
     searched_dirs = _candidate_dirs(settings)
 
@@ -54,8 +66,9 @@ def discover_model_files(settings: Settings) -> ModelFiles:
     if settings.index_path:
         index_path = settings.index_path if _valid_model_file(settings.index_path, ".index") else None
     else:
+        index_dirs = _index_candidate_dirs(settings, model_path)
         index_path = next(
-            (path for directory in searched_dirs if directory.exists() for path in sorted(directory.glob("*.index")) if _valid_model_file(path, ".index")),
+            (path for directory in index_dirs if directory.exists() for path in sorted(directory.glob("*.index")) if _valid_model_file(path, ".index")),
             None,
         )
 

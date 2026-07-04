@@ -92,6 +92,17 @@ class RvcEngine:
             return self._rvc
         return await asyncio.to_thread(self._initialize_backend)
 
+    @staticmethod
+    def _filter_supported_kwargs(callable_obj: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
+        try:
+            signature = inspect.signature(callable_obj)
+        except (TypeError, ValueError):
+            return kwargs
+        if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+            return kwargs
+        accepted = set(signature.parameters)
+        return {key: value for key, value in kwargs.items() if key in accepted}
+
     async def convert_file(
         self,
         input_path: Path,
@@ -117,9 +128,15 @@ class RvcEngine:
 
             try:
                 def run_inference() -> None:
-                    signature = inspect.signature(rvc.infer_file)
-                    accepted = set(signature.parameters)
-                    filtered_kwargs = {key: value for key, value in kwargs.items() if key in accepted}
+                    filtered_kwargs = self._filter_supported_kwargs(rvc.infer_file, kwargs)
+                    set_params = getattr(rvc, "set_params", None)
+                    if callable(set_params):
+                        set_params_kwargs = self._filter_supported_kwargs(set_params, kwargs)
+                        if set_params_kwargs:
+                            try:
+                                set_params(**set_params_kwargs)
+                            except TypeError:
+                                pass
                     try:
                         rvc.infer_file(str(input_path), str(output_path), **filtered_kwargs)
                     except TypeError:

@@ -63,6 +63,35 @@ def test_model_discovery_ignores_zone_identifier_and_prefers_project_root(monkey
     assert not result.model_path.name.endswith("Zone.Identifier")
 
 
+def test_model_discovery_prefers_index_next_to_explicit_model(tmp_path):
+    from app.config import Settings
+    from app.model_discovery import discover_model_files
+
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+    model_dir = tmp_path / "explicit"
+    model_dir.mkdir()
+
+    model_path = model_dir / "voice.pth"
+    model_path.write_bytes(b"model")
+    preferred_index = model_dir / "voice.index"
+    preferred_index.write_bytes(b"preferred")
+    fallback_index = models_dir / "fallback.index"
+    fallback_index.write_bytes(b"fallback")
+
+    settings = Settings(
+        project_root=tmp_path,
+        models_dir=models_dir,
+        model_path=model_path,
+        device="cuda:0",
+    )
+
+    result = discover_model_files(settings)
+
+    assert result.model_path == model_path.resolve()
+    assert result.index_path == preferred_index.resolve()
+
+
 def test_health_reports_cuda_default_and_model_status():
     from app.main import create_app
 
@@ -358,3 +387,51 @@ def test_convert_file_serializes_backend_usage(monkeypatch, tmp_path):
         await second
 
     asyncio.run(run_two_conversions())
+
+
+def test_convert_file_applies_conversion_parameters(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    index_path = tmp_path / "model.index"
+    index_path.write_bytes(b"index")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=index_path, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    seen = {}
+
+    class Backend:
+        def set_params(self, **kwargs):
+            seen["set_params"] = kwargs
+
+        def infer_file(self, input_path, output_path, **kwargs):
+            seen["infer_file"] = kwargs
+            Path(output_path).write_bytes(b"RIFFmockWAVEdata")
+
+    async def fake_load_backend():
+        return Backend()
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    asyncio.run(engine.convert_file(input_path, pitch=3, index_rate=0.75, f0_method="harvest"))
+
+    assert seen["set_params"] == {
+        "f0up_key": 3,
+        "f0method": "harvest",
+        "index_rate": 0.75,
+        "index_path": str(index_path),
+    }
+    assert seen["infer_file"] == {
+        "f0up_key": 3,
+        "f0method": "harvest",
+        "index_rate": 0.75,
+        "index_path": str(index_path),
+    }
