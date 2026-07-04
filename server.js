@@ -95,6 +95,8 @@ wss.on('connection', (client) => {
   const sendToDeepgram = (data, isBinary = false) => {
     if (deepgram.readyState === WebSocket.OPEN) deepgram.send(data, { binary: isBinary });
   };
+  const shouldBufferAssistantAudio = () =>
+    rvcEnabled() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning;
 
   const sendOriginalAssistantAudio = (chunks) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
@@ -217,7 +219,7 @@ wss.on('connection', (client) => {
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));
   deepgram.on('message', async (data, isBinary) => {
     if (isBinary) {
-      if (rvcEnabled()) {
+      if (shouldBufferAssistantAudio()) {
         const chunk = Buffer.from(data);
         assistantAudioChunks.push(chunk);
         assistantAudioBytes += chunk.length;
