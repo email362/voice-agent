@@ -67,7 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=app.state.model_error or "RVC model is not loaded")
 
         workdir = Path(tempfile.mkdtemp(prefix="rvc-service-"))
-        input_path = workdir / (audio.filename or "input.wav")
+        input_path = workdir / "input.wav"
         try:
             with input_path.open("wb") as handle:
                 shutil.copyfileobj(audio.file, handle)

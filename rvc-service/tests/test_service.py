@@ -82,3 +82,27 @@ def test_convert_returns_wav_from_engine(tmp_path):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("audio/wav")
     assert response.content == output
+
+
+def test_convert_ignores_client_supplied_filename(tmp_path):
+    from app.main import create_app
+
+    app = create_app()
+    seen = {}
+
+    async def fake_convert(input_path, **kwargs):
+        seen["input_path"] = input_path
+        out = tmp_path / "out.wav"
+        out.write_bytes(b"RIFFmockWAVEdata")
+        return out
+
+    app.state.engine.convert_file = fake_convert
+    client = TestClient(app)
+
+    response = client.post(
+        "/convert",
+        files={"audio": ("../../tmp/pwned.wav", b"RIFF....WAVEfmt ", "audio/wav")},
+    )
+
+    assert response.status_code == 200
+    assert seen["input_path"].name == "input.wav"

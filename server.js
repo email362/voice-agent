@@ -50,8 +50,17 @@ wss.on('connection', (client) => {
   let lastClientAudioLogAt = Date.now();
   let assistantAudioChunks = [];
   let assistantAudioBytes = 0;
+  let assistantAudioGeneration = 0;
   let rvcDisabledForSession = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
+  const clearAssistantAudioBuffer = () => {
+    assistantAudioChunks = [];
+    assistantAudioBytes = 0;
+  };
+  const discardAssistantAudioBuffer = () => {
+    assistantAudioGeneration += 1;
+    clearAssistantAudioBuffer();
+  };
   const logAudioProgress = () => {
     if (!DEBUG_AUDIO) return;
     const now = Date.now();
@@ -75,12 +84,11 @@ wss.on('connection', (client) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
   };
 
-  const flushAssistantAudio = async () => {
-    if (!assistantAudioChunks.length) return;
+  const flushAssistantAudio = async (generation) => {
+    if (generation !== assistantAudioGeneration || !assistantAudioChunks.length) return;
     const chunks = assistantAudioChunks;
     const byteLength = assistantAudioBytes;
-    assistantAudioChunks = [];
-    assistantAudioBytes = 0;
+    clearAssistantAudioBuffer();
 
     if (!rvcEnabled()) {
       sendOriginalAssistantAudio(chunks);
@@ -100,6 +108,7 @@ wss.on('connection', (client) => {
         timeoutMs: RVC_TIMEOUT_MS,
       });
       app.log.info({ inputBytes: byteLength, outputBytes: converted.length }, 'RVC conversion complete');
+      if (generation !== assistantAudioGeneration) return;
       sendToClient(converted, true);
     } catch (error) {
       rvcDisabledForSession = true;
@@ -132,7 +141,11 @@ wss.on('connection', (client) => {
     }
 
     sendToClient(data, false);
-    if (event.type === 'AgentAudioDone') await flushAssistantAudio();
+    if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
+    if (event.type === 'AgentAudioDone') {
+      const generation = assistantAudioGeneration;
+      await flushAssistantAudio(generation);
+    }
   });
   deepgram.on('error', (error) => sendToClient(JSON.stringify({ type: 'ProxyError', description: error.message })));
   deepgram.on('close', (code, reason) => {
@@ -158,8 +171,7 @@ wss.on('connection', (client) => {
     sendToDeepgram(data, isBinary);
   });
   client.on('close', () => {
-    assistantAudioChunks = [];
-    assistantAudioBytes = 0;
+    discardAssistantAudioBuffer();
     deepgram.close();
   });
   client.on('error', () => deepgram.close());

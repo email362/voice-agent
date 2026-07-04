@@ -17,9 +17,11 @@ assert.match(app, /if \(!canStreamMic \|\| socket\?\.readyState !== WebSocket\.O
 assert.match(app, /event\.type === 'SettingsApplied'[\s\S]*canStreamMic = true;[\s\S]*setMicState\('live', 'Mic live'\)/, 'app.js should enable mic streaming and show Mic live after SettingsApplied');
 assert.match(app, /setMicState\('streaming', `Mic streaming \(\$\{outboundAudioFrames\} frames\)`\)/, 'app.js should show Mic streaming once frames are sent');
 assert.match(app, /event\.type === 'UserStartedSpeaking'[\s\S]*stopPlayback\(\)/, 'app.js should stop queued playback when Deepgram hears the user');
+assert.match(app, /try \{[\s\S]*event = JSON\.parse\(message\.data\);[\s\S]*\} catch \{[\s\S]*return;[\s\S]*\}/, 'app.js should ignore unexpected non-JSON text frames');
 assert.match(app, /playbackNodes\.add\(node\)/, 'app.js should track playback nodes for cancellation');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');
+assert.match(server, /discardAssistantAudioBuffer\(\);/, 'server.js should discard queued assistant audio on barge-in or disconnect');
 
 console.log('audio-flow checks passed');

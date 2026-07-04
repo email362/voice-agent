@@ -165,7 +165,12 @@ async function startConversation() {
       playAudio(message.data).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
       return;
     }
-    const event = JSON.parse(message.data);
+    let event;
+    try {
+      event = JSON.parse(message.data);
+    } catch {
+      return;
+    }
     logEvent(event);
     if (event.type === 'UserStartedSpeaking') stopPlayback();
     if (event.type === 'Welcome') socket.send(JSON.stringify(buildSettings()));
