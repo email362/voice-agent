@@ -50,7 +50,7 @@ const fs = require('node:fs');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
   assert.match(server, /signal: conversionController\.signal/, 'server should pass a cancellation signal into RVC conversion');
   assert.match(server, /abortAssistantAudioConversion\(\);/, 'server should abort in-flight conversion when audio is discarded');
-  assert.match(server, /rvcDisabledForSession = true;[\s\S]*sendOriginalAssistantAudio\(chunks\);[\s\S]*discardAssistantAudioBuffer\(\);/, 'server should clear stale buffered assistant audio when falling back from RVC');
+  assert.match(server, /rvcDisabledForSession = true;[\s\S]*sendOriginalAssistantAudio\(chunks\);/, 'server should replay the current assistant buffer when falling back from RVC');
   assert.match(server, /generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(chunks\)/, 'server should skip stale fallback audio after generation changes');
 
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');

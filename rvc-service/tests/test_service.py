@@ -514,6 +514,39 @@ def test_load_backend_initialization_runs_off_thread(monkeypatch, tmp_path):
     assert calls == ["_initialize_backend"]
 
 
+def test_load_backend_caches_initialization_failure(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcConversionError, RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    init_calls = 0
+
+    def fake_initialize_backend(self):
+        nonlocal init_calls
+        init_calls += 1
+        raise RvcConversionError("Failed to initialize RVC model: boom")
+
+    monkeypatch.setattr(RvcEngine, "_initialize_backend", fake_initialize_backend)
+
+    with pytest.raises(RvcConversionError, match="boom"):
+        asyncio.run(engine._load_backend())
+
+    assert init_calls == 1
+    assert engine.backend_error == "Failed to initialize RVC model: boom"
+
+    with pytest.raises(RvcConversionError, match="boom"):
+        asyncio.run(engine._load_backend())
+
+    assert init_calls == 1
+
+
 def test_convert_file_serializes_backend_usage(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles

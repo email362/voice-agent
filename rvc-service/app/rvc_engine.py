@@ -57,6 +57,7 @@ class RvcEngine:
         self.model_files = model_files
         self.device_status = device_status
         self._backend_error: str | None = None
+        self._backend_failure: Exception | None = None
         self._rvc: Any | None = None
         self._backend_init_lock = asyncio.Lock()
         self._conversion_lock = asyncio.Lock()
@@ -75,6 +76,8 @@ class RvcEngine:
     def backend_error(self) -> str | None:
         if self._rvc is not None:
             return None
+        if self._backend_failure is not None:
+            return str(self._backend_failure)
         if self._backend_error is None and not self.backend_available:
             return self._backend_error
         return self._backend_error
@@ -113,10 +116,18 @@ class RvcEngine:
     async def _load_backend(self) -> Any:
         if self._rvc is not None:
             return self._rvc
+        if self._backend_failure is not None:
+            raise self._backend_failure
         async with self._backend_init_lock:
             if self._rvc is not None:
                 return self._rvc
-            return await asyncio.to_thread(self._initialize_backend)
+            if self._backend_failure is not None:
+                raise self._backend_failure
+            try:
+                return await asyncio.to_thread(self._initialize_backend)
+            except Exception as exc:
+                self._backend_failure = exc
+                raise
 
     async def ensure_ready(self) -> bool:
         try:
