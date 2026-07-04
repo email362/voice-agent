@@ -4,6 +4,8 @@ const stopBtn = document.querySelector('#stopBtn');
 const statusEl = document.querySelector('#status');
 const eventsEl = document.querySelector('#events');
 const transcriptEl = document.querySelector('#transcript');
+const micIndicator = document.querySelector('#micIndicator');
+const micLabel = document.querySelector('#micLabel');
 
 let socket;
 let micStream;
@@ -11,10 +13,19 @@ let audioContext;
 let source;
 let processor;
 let nextPlaybackTime = 0;
+let playbackNodes = new Set();
 let keepAlive;
+let canStreamMic = false;
+let outboundAudioFrames = 0;
+let outboundAudioBytes = 0;
+let lastAudioStatusAt = 0;
 
 
 function setStatus(message) { statusEl.textContent = message; }
+function setMicState(state, label) {
+  micIndicator.dataset.state = state;
+  micLabel.textContent = label;
+}
 function logEvent(event) { eventsEl.textContent = `${JSON.stringify(event, null, 2)}\n\n${eventsEl.textContent}`.slice(0, 12000); }
 function addTranscript(role, content) {
   const bubble = document.createElement('div');
@@ -70,12 +81,53 @@ async function startMic() {
   source = audioContext.createMediaStreamSource(micStream);
   processor = audioContext.createScriptProcessor(4096, 1, 1);
   processor.onaudioprocess = (event) => {
-    if (socket?.readyState !== WebSocket.OPEN) return;
+    if (!canStreamMic || socket?.readyState !== WebSocket.OPEN) return;
     const pcm = floatTo16BitPcm(downsample(event.inputBuffer.getChannelData(0), audioContext.sampleRate, SAMPLE_RATE));
     socket.send(pcm);
+    outboundAudioFrames += 1;
+    outboundAudioBytes += pcm.byteLength;
+    const now = Date.now();
+    if (now - lastAudioStatusAt > 2000) {
+      lastAudioStatusAt = now;
+      setMicState('streaming', `Mic streaming (${outboundAudioFrames} frames)`);
+      setStatus(`Live. Streaming microphone audio (${outboundAudioFrames} frames, ${Math.round(outboundAudioBytes / 1024)} KB).`);
+    }
   };
   source.connect(processor);
   processor.connect(audioContext.destination);
+}
+
+function stopPlayback() {
+  playbackNodes.forEach((node) => {
+    try {
+      node.stop();
+    } catch {
+      // The node may already have ended.
+    }
+  });
+  playbackNodes.clear();
+  if (audioContext) nextPlaybackTime = audioContext.currentTime;
+}
+
+function isWavAudio(arrayBuffer) {
+  const header = new Uint8Array(arrayBuffer.slice(0, 12));
+  return String.fromCharCode(...header.slice(0, 4)) === 'RIFF' && String.fromCharCode(...header.slice(8, 12)) === 'WAVE';
+}
+
+function scheduleAudioBuffer(audioBuffer) {
+  const node = audioContext.createBufferSource();
+  node.buffer = audioBuffer;
+  playbackNodes.add(node);
+  node.addEventListener('ended', () => playbackNodes.delete(node), { once: true });
+  node.connect(audioContext.destination);
+  const startAt = Math.max(audioContext.currentTime, nextPlaybackTime);
+  node.start(startAt);
+  nextPlaybackTime = startAt + audioBuffer.duration;
+}
+
+async function playWav(arrayBuffer) {
+  const decoded = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+  scheduleAudioBuffer(decoded);
 }
 
 function playPcm(arrayBuffer) {
@@ -83,12 +135,15 @@ function playPcm(arrayBuffer) {
   const audioBuffer = audioContext.createBuffer(1, int16.length, SAMPLE_RATE);
   const channel = audioBuffer.getChannelData(0);
   for (let i = 0; i < int16.length; i += 1) channel[i] = int16[i] / 32768;
-  const node = audioContext.createBufferSource();
-  node.buffer = audioBuffer;
-  node.connect(audioContext.destination);
-  const startAt = Math.max(audioContext.currentTime, nextPlaybackTime);
-  node.start(startAt);
-  nextPlaybackTime = startAt + audioBuffer.duration;
+  scheduleAudioBuffer(audioBuffer);
+}
+
+async function playAudio(arrayBuffer) {
+  if (isWavAudio(arrayBuffer)) {
+    await playWav(arrayBuffer);
+    return;
+  }
+  playPcm(arrayBuffer);
 }
 
 async function startConversation() {
@@ -96,19 +151,29 @@ async function startConversation() {
   stopBtn.disabled = false;
   transcriptEl.textContent = '';
   eventsEl.textContent = '';
+  canStreamMic = false;
+  outboundAudioFrames = 0;
+  outboundAudioBytes = 0;
+  lastAudioStatusAt = 0;
+  setMicState('connecting', 'Mic warming up');
   await startMic();
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`);
   socket.binaryType = 'arraybuffer';
   socket.addEventListener('open', () => { setStatus('Connected to proxy. Waiting for Deepgram welcome...'); });
   socket.addEventListener('message', (message) => {
     if (message.data instanceof ArrayBuffer) {
-      playPcm(message.data);
+      playAudio(message.data).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
       return;
     }
     const event = JSON.parse(message.data);
     logEvent(event);
+    if (event.type === 'UserStartedSpeaking') stopPlayback();
     if (event.type === 'Welcome') socket.send(JSON.stringify(buildSettings()));
-    if (event.type === 'SettingsApplied') setStatus('Live. Speak into your microphone.');
+    if (event.type === 'SettingsApplied') {
+      canStreamMic = true;
+      setMicState('live', 'Mic live');
+      setStatus('Live. Speak into your microphone.');
+    }
     if (event.type === 'ConversationText') addTranscript(event.role, event.content);
     if (event.type === 'Error' || event.type === 'ProxyError') setStatus(event.description || 'An error occurred.');
   });
@@ -118,6 +183,9 @@ async function startConversation() {
 
 function stopConversation() {
   clearInterval(keepAlive);
+  canStreamMic = false;
+  setMicState('idle', 'Mic idle');
+  stopPlayback();
   if (socket?.readyState === WebSocket.OPEN) socket.close();
   processor?.disconnect();
   source?.disconnect();

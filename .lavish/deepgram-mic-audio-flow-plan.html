@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deepgram Mic Audio Flow Plan</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #080b13;
+      color: #f6f8ff;
+      --bg: #080b13;
+      --panel: #101625cc;
+      --panel-strong: #151d31;
+      --line: #ffffff18;
+      --line-strong: #ffffff2b;
+      --text-muted: #c8d0ea;
+      --cyan: #87e8ff;
+      --green: #b6ff8f;
+      --yellow: #ffd166;
+      --red: #ff7c9b;
+      --ink: #050711;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, #243bff55, transparent 35%),
+        radial-gradient(circle at 80% 10%, #12d6ff22, transparent 28%),
+        #080b13;
+    }
+    .shell {
+      width: min(1180px, 94vw);
+      margin: 0 auto;
+      padding: 42px 0 64px;
+      display: grid;
+      gap: 18px;
+    }
+    .hero, .panel {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: 0 20px 80px #0008;
+      min-width: 0;
+    }
+    .hero {
+      display: grid;
+      gap: 18px;
+    }
+    .eyebrow {
+      margin: 0;
+      color: var(--cyan);
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      font-size: .78rem;
+    }
+    h1 {
+      margin: 0;
+      max-width: 980px;
+      font-size: clamp(2.15rem, 5.4vw, 4.8rem);
+      line-height: 1.16;
+      letter-spacing: 0;
+      padding: 6px 0 10px;
+    }
+    h2, h3 { margin: 0; letter-spacing: 0; }
+    h2 { font-size: 1.35rem; }
+    h3 { font-size: 1rem; }
+    p { margin: 0; }
+    .lede {
+      color: var(--text-muted);
+      max-width: 880px;
+      font-size: 1.05rem;
+      line-height: 1.55;
+    }
+    .status-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      background: #080b1380;
+      border-radius: 14px;
+      padding: 14px;
+      min-width: 0;
+    }
+    .metric strong {
+      display: block;
+      color: #fff;
+      font-size: 1.55rem;
+      line-height: 1.28;
+      margin-bottom: 5px;
+      padding-bottom: 2px;
+    }
+    .metric span {
+      color: var(--text-muted);
+      font-size: .88rem;
+      line-height: 1.35;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .stack { display: grid; gap: 14px; }
+    .card {
+      border: 1px solid var(--line);
+      background: #080b1380;
+      border-radius: 16px;
+      padding: 16px;
+      min-width: 0;
+    }
+    .card.good { border-color: #b6ff8f55; }
+    .card.warn { border-color: #ffd16666; }
+    .card.bad { border-color: #ff7c9b66; }
+    .label {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: 999px;
+      color: var(--cyan);
+      padding: 5px 9px;
+      font-size: .76rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      overflow-wrap: anywhere;
+    }
+    .muted { color: var(--text-muted); line-height: 1.5; }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      overflow-wrap: anywhere;
+    }
+    .flow-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      background: #050711;
+      border-radius: 16px;
+      padding: 10px;
+    }
+    svg {
+      display: block;
+      width: 100%;
+      min-width: 760px;
+      height: auto;
+    }
+    .flow-node rect {
+      fill: #151d31;
+      stroke: #ffffff2b;
+      stroke-width: 1.2;
+      rx: 12;
+    }
+    .flow-node text { fill: #f6f8ff; font-size: 13px; font-weight: 700; }
+    .flow-node .sub { fill: #c8d0ea; font-size: 11px; font-weight: 500; }
+    .flow-line { stroke: #87e8ff; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    .bad-line { stroke: #ff7c9b; stroke-dasharray: 5 5; }
+    .table {
+      display: grid;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #050711;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: minmax(120px, .75fr) minmax(0, 1.15fr) minmax(0, 1.15fr);
+      border-top: 1px solid var(--line);
+      min-width: 0;
+    }
+    .row:first-child { border-top: 0; }
+    .cell {
+      padding: 13px;
+      border-left: 1px solid var(--line);
+      min-width: 0;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+    .cell:first-child { border-left: 0; color: #fff; font-weight: 800; }
+    .head .cell {
+      color: #fff;
+      background: #151d31;
+      font-weight: 900;
+    }
+    .tasks {
+      counter-reset: task;
+      display: grid;
+      gap: 12px;
+    }
+    .task {
+      counter-increment: task;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      background: #080b1380;
+      border-radius: 16px;
+      padding: 14px;
+    }
+    .task::before {
+      content: counter(task);
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--cyan);
+      color: #06101f;
+      font-weight: 900;
+    }
+    .task ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+    .evidence {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .check {
+      border-left: 4px solid var(--green);
+    }
+    .question {
+      border-left: 4px solid var(--yellow);
+    }
+    .fail {
+      border-left: 4px solid var(--red);
+    }
+    .footer {
+      color: var(--text-muted);
+      font-size: .92rem;
+      line-height: 1.45;
+    }
+    a { color: var(--cyan); }
+    @media (max-width: 820px) {
+      .status-row, .grid, .evidence { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 1fr; }
+      .cell, .cell:first-child { border-left: 0; border-top: 1px solid var(--line); }
+      .row .cell:first-child { border-top: 0; }
+      .hero, .panel { padding: 20px; border-radius: 18px; }
+      .task { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Deepgram Voice Agent POC</p>
+      <h1>Mic input fix plan: prove the audio path, then enforce the protocol.</h1>
+      <p class="lede">The agent can speak, so the session and output path are alive. The plan focuses on the missing input path: binary microphone frames must wait until Deepgram confirms settings, then be measured at the browser, proxy, and Deepgram-event layers.</p>
+      <div class="status-row">
+        <div class="metric"><strong>1</strong><span>Primary root-cause hypothesis: audio is streamed before <span class="mono">SettingsApplied</span>.</span></div>
+        <div class="metric"><strong>4</strong><span>Files in scope: <span class="mono">index.html</span>, <span class="mono">styles.css</span>, <span class="mono">app.js</span>, and <span class="mono">server.js</span>.</span></div>
+        <div class="metric"><strong>0</strong><span>New runtime dependencies planned.</span></div>
+      </div>
+    </section>
+
+    <section class="panel stack">
+      <h2>Decision: current behavior vs target behavior</h2>
+      <div class="table">
+        <div class="row head">
+          <div class="cell">Area</div>
+          <div class="cell">Current</div>
+          <div class="cell">Target</div>
+        </div>
+        <div class="row">
+          <div class="cell">Mic streaming</div>
+          <div class="cell">Starts as soon as the browser WebSocket is open.</div>
+          <div class="cell">Starts only after Deepgram sends <span class="mono">SettingsApplied</span>, with a visible <span class="mono">Mic live</span> cue.</div>
+        </div>
+        <div class="row">
+          <div class="cell">Server visibility</div>
+          <div class="cell">Fastify logs static files; WebSocket audio is opaque.</div>
+          <div class="cell">Opt-in aggregate logs show client audio frame count, byte count, and Deepgram event types.</div>
+        </div>
+        <div class="row">
+          <div class="cell">Barge-in</div>
+          <div class="cell">Agent playback can continue while the user speaks.</div>
+          <div class="cell">Queued playback stops when <span class="mono">UserStartedSpeaking</span> arrives.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel stack">
+      <h2>Message flow to enforce</h2>
+      <div class="flow-wrap" aria-label="Deepgram message flow">
+        <svg viewBox="0 0 980 330" role="img">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#87e8ff"></path>
+            </marker>
+          </defs>
+          <g class="flow-node">
+            <rect x="34" y="38" width="180" height="72"></rect>
+            <text x="54" y="68">User clicks Start</text>
+            <text class="sub" x="54" y="91">browser gesture unlocks mic</text>
+          </g>
+          <path class="flow-line" d="M214 74 C246 74 254 74 286 74"></path>
+          <g class="flow-node">
+            <rect x="286" y="38" width="190" height="72"></rect>
+            <text x="306" y="68">Open /ws/agent</text>
+            <text class="sub" x="306" y="91">proxy connects to Deepgram</text>
+          </g>
+          <path class="flow-line" d="M476 74 C508 74 516 74 548 74"></path>
+          <g class="flow-node">
+            <rect x="548" y="38" width="170" height="72"></rect>
+            <text x="568" y="68">Welcome</text>
+            <text class="sub" x="568" y="91">send Settings JSON</text>
+          </g>
+          <path class="flow-line" d="M718 74 C750 74 758 74 790 74"></path>
+          <g class="flow-node">
+            <rect x="790" y="38" width="156" height="72"></rect>
+            <text x="810" y="68">SettingsApplied</text>
+            <text class="sub" x="810" y="91">audio gate opens</text>
+          </g>
+          <path class="flow-line" d="M868 110 C868 132 868 138 868 158"></path>
+          <g class="flow-node">
+            <rect x="772" y="138" width="190" height="44"></rect>
+            <text x="792" y="166">Show Mic live cue</text>
+          </g>
+          <path class="flow-line" d="M868 182 C868 184 868 186 868 188"></path>
+          <g class="flow-node">
+            <rect x="740" y="188" width="206" height="82"></rect>
+            <text x="760" y="220">Binary PCM frames</text>
+            <text class="sub" x="760" y="243">24 kHz linear16 to Deepgram</text>
+          </g>
+          <path class="flow-line bad-line" d="M124 110 C124 222 304 230 740 230"></path>
+          <text x="90" y="155" fill="#ff7c9b" font-size="12" font-weight="800">current risk: audio can leak early</text>
+        </svg>
+      </div>
+    </section>
+
+    <section class="grid">
+      <section class="panel stack">
+        <h2>Implementation tasks</h2>
+        <div class="tasks">
+          <div class="task">
+            <div>
+              <h3>Add mic-live cue and gate microphone frames</h3>
+              <ul>
+                <li>Add a pill-style <span class="mono">Mic idle / warming up / live / streaming</span> indicator near the Start and Stop buttons.</li>
+                <li>Add <span class="mono">canStreamMic</span> and browser-side audio counters.</li>
+                <li>Only call <span class="mono">socket.send(pcm)</span> after <span class="mono">SettingsApplied</span>.</li>
+                <li>Set the visual cue to <span class="mono">Mic live</span> at readiness and <span class="mono">Mic streaming</span> once frames leave the browser.</li>
+                <li>Expose a temporary UI status with frame and KB counts.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="task">
+            <div>
+              <h3>Cancel playback on <span class="mono">UserStartedSpeaking</span></h3>
+              <ul>
+                <li>Track active audio buffer source nodes.</li>
+                <li>Stop and clear playback when Deepgram detects the user speaking.</li>
+                <li>Reset queued playback time to the current audio context time.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="task">
+            <div>
+              <h3>Add opt-in proxy diagnostics in <span class="mono">server.js</span></h3>
+              <ul>
+                <li>Use <span class="mono">DEBUG_AUDIO=1</span> to avoid noisy default logs.</li>
+                <li>Aggregate client binary frame and byte counts every two seconds.</li>
+                <li>Log client and Deepgram JSON event types, including warning/error codes.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="task">
+            <div>
+              <h3>Verify with live audio evidence</h3>
+              <ul>
+                <li>Run syntax checks for client and server files.</li>
+                <li>Start with <span class="mono">DEBUG_AUDIO=1 npm start</span>.</li>
+                <li>Confirm the visual mic cue, UI counters, server byte counters, <span class="mono">UserStartedSpeaking</span>, and user <span class="mono">ConversationText</span>.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>Failure interpretation</h2>
+        <div class="evidence">
+          <div class="card fail">
+            <span class="label">Browser layer</span>
+            <p class="muted">If the UI frame counter stays at zero, focus on microphone permission, input device selection, audio context state, or whether <span class="mono">onaudioprocess</span> is firing.</p>
+          </div>
+          <div class="card question">
+            <span class="label">Proxy layer</span>
+            <p class="muted">If UI counters rise but server counters do not, the browser is not sending binary frames over the WebSocket path we expect.</p>
+          </div>
+          <div class="card good">
+            <span class="label">Deepgram layer</span>
+            <p class="muted">If server counters rise but Deepgram emits no user events, inspect <span class="mono">USER_AUDIO_FORMAT</span>, <span class="mono">ASR_DRIVER_TIMEOUT</span>, and listen model settings.</p>
+          </div>
+        </div>
+        <div class="card warn">
+          <span class="label">Known tradeoff</span>
+          <p class="muted"><span class="mono">ScriptProcessorNode</span> is deprecated. This plan keeps it to avoid a larger audio pipeline rewrite while we isolate the current failure.</p>
+        </div>
+      </section>
+    </section>
+
+    <section class="panel stack">
+      <h2>Review checkpoints</h2>
+      <div class="grid">
+        <div class="card">
+          <span class="label">Approve scope</span>
+          <p class="muted">The saved implementation plan is at <span class="mono">docs/superpowers/plans/2026-07-04-deepgram-mic-audio-flow.md</span>. It stays narrowly scoped to protocol order, a visible mic-live cue, barge-in handling, and debug logs.</p>
+        </div>
+        <div class="card">
+          <span class="label">Execution choice</span>
+          <p class="muted">Recommended execution is inline in this branch because the change touches two small files and requires live browser/server verification with your microphone.</p>
+        </div>
+      </div>
+      <p class="footer">Design source: matched the existing app CSS in <span class="mono">public/styles.css</span> because this artifact is about the Deepgram POC itself. Official Deepgram docs were used for the message-flow requirement and error interpretation.</p>
+    </section>
+  </main>
+</body>
+</html>

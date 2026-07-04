@@ -1,0 +1,7 @@
+.venv/
+.venv310/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.wav
+*.tmp

@@ -10,6 +10,11 @@ h1 { font-size: clamp(2.2rem, 7vw, 5rem); line-height: .95; margin: 0 0 20px; }
 button { border: 0; border-radius: 999px; padding: 14px 20px; color: #06101f; background: #87e8ff; font-weight: 800; cursor: pointer; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 .status { color: #c8d0ea; }
+.mic-indicator { display: inline-flex; align-items: center; width: fit-content; max-width: 100%; gap: 8px; border: 1px solid #ffffff22; border-radius: 999px; padding: 8px 12px; color: #c8d0ea; background: #080b1388; font-weight: 800; }
+.mic-dot { width: 10px; height: 10px; border-radius: 50%; background: #7d879f; }
+.mic-indicator[data-state="connecting"] .mic-dot { background: #ffd166; }
+.mic-indicator[data-state="live"] .mic-dot, .mic-indicator[data-state="streaming"] .mic-dot { background: #b6ff8f; box-shadow: 0 0 0 6px #b6ff8f22; }
+.mic-indicator[data-state="streaming"] { color: #f6f8ff; }
 label { display: grid; gap: 8px; color: #dbe4ff; font-weight: 700; }
 textarea, input { width: 100%; border: 1px solid #ffffff22; border-radius: 14px; padding: 12px; background: #080b13; color: #fff; font: inherit; font-weight: 500; }
 textarea { min-height: 110px; resize: vertical; }

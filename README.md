@@ -75,6 +75,29 @@ npm start
 
 Open <http://localhost:3000>, allow microphone access, and click **Start conversation**.
 
+
+## RVC voice conversion service
+
+This repo also includes an isolated Python service in `rvc-service/` for converting Deepgram assistant TTS through the local RVC voice model. It is separate from the Node app but can be enabled through `RVC_SERVICE_URL`.
+
+Start the RVC service with CUDA:
+
+```bash
+cd /home/chyer/projects/voice-agent/rvc-service
+RVC_DEVICE=cuda:0 .venv310/bin/python run.py
+```
+
+Start the Deepgram app with RVC conversion enabled:
+
+```bash
+cd /home/chyer/projects/voice-agent
+PATH=/home/chyer/.nvm/versions/node/v24.16.0/bin:$PATH \
+  RVC_SERVICE_URL=http://127.0.0.1:5055 \
+  npm start
+```
+
+The Node proxy buffers assistant PCM audio until Deepgram sends `AgentAudioDone`, posts it to `POST /convert`, then sends the converted WAV to the browser. If RVC fails, it falls back to the original Deepgram audio for that session.
+
 ## Environment variables
 
 See `.env.example` for templates:
@@ -83,6 +106,9 @@ See `.env.example` for templates:
 - `DEEPGRAM_AGENT_URL` — optional endpoint override. Defaults to `wss://agent.deepgram.com/v1/agent/converse`.
 - `OPENAI_API_KEY` — optional placeholder for the LLM provider configured in Deepgram agent settings.
 - `PORT` — optional local server port.
+- `RVC_SERVICE_URL` — optional RVC service URL. Defaults to `http://127.0.0.1:5055`; set empty to disable conversion.
+- `RVC_TIMEOUT_MS` — optional RVC conversion timeout in milliseconds. Defaults to `120000`.
+- `RVC_PITCH`, `RVC_INDEX_RATE`, `RVC_F0_METHOD` — optional conversion parameters forwarded to the RVC service.
 
 ## Notes
 

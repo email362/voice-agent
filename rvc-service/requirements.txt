@@ -1,0 +1,6 @@
+fastapi>=0.139.0
+uvicorn[standard]>=0.50.0
+python-multipart>=0.0.32
+rvc-python>=0.1.0
+pytest>=9.1.1
+httpx>=0.28.1
