@@ -2,6 +2,7 @@ from pathlib import Path
 import asyncio
 import tempfile
 import sys
+import types
 
 import pytest
 from fastapi.testclient import TestClient
@@ -145,3 +146,79 @@ def test_convert_file_cleans_up_temp_output_on_failure(monkeypatch, tmp_path):
         asyncio.run(engine.convert_file(input_path))
 
     assert not created["path"].exists()
+
+
+def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    seen = {}
+
+    class FakeRVCInference:
+        def __init__(self, **kwargs):
+            seen["constructor_kwargs"] = kwargs
+
+        def load_model(self, model_path, **kwargs):
+            seen["model_path"] = model_path
+            seen["load_kwargs"] = kwargs
+
+    infer_module = types.ModuleType("rvc_python.infer")
+    infer_module.RVCInference = FakeRVCInference
+    package_module = types.ModuleType("rvc_python")
+    package_module.infer = infer_module
+    monkeypatch.setitem(sys.modules, "rvc_python", package_module)
+    monkeypatch.setitem(sys.modules, "rvc_python.infer", infer_module)
+
+    backend = engine._initialize_backend()
+
+    assert backend is engine._rvc
+    assert seen["constructor_kwargs"] == {"device": "cpu"}
+    assert seen["model_path"] == str(model_path)
+    assert seen["load_kwargs"] == {}
+
+
+def test_load_backend_initialization_runs_off_thread(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    calls = []
+
+    async def fake_to_thread(func, *args, **kwargs):
+        calls.append(func.__name__)
+        return func(*args, **kwargs)
+
+    class FakeRVCInference:
+        def __init__(self, **kwargs):
+            pass
+
+        def load_model(self, model_path, **kwargs):
+            pass
+
+    infer_module = types.ModuleType("rvc_python.infer")
+    infer_module.RVCInference = FakeRVCInference
+    package_module = types.ModuleType("rvc_python")
+    package_module.infer = infer_module
+    monkeypatch.setitem(sys.modules, "rvc_python", package_module)
+    monkeypatch.setitem(sys.modules, "rvc_python.infer", infer_module)
+    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+
+    backend = asyncio.run(engine._load_backend())
+
+    assert backend is engine._rvc
+    assert calls == ["_initialize_backend"]

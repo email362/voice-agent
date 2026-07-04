@@ -19,6 +19,7 @@ assert.match(app, /setMicState\('streaming', `Mic streaming \(\$\{outboundAudioF
 assert.match(app, /event\.type === 'UserStartedSpeaking'[\s\S]*stopPlayback\(\)/, 'app.js should stop queued playback when Deepgram hears the user');
 assert.match(app, /try \{[\s\S]*event = JSON\.parse\(message\.data\);[\s\S]*\} catch \{[\s\S]*return;[\s\S]*\}/, 'app.js should ignore unexpected non-JSON text frames');
 assert.match(app, /playbackNodes\.add\(node\)/, 'app.js should track playback nodes for cancellation');
+assert.match(app, /const activeSocket = socket;[\s\S]*if \(activeSocket\?\.readyState !== WebSocket\.CLOSED\) activeSocket\.close\(\);/, 'app.js should close connecting sockets when stopping');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');

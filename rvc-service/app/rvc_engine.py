@@ -19,8 +19,6 @@ class RvcConversionError(RuntimeError):
     pass
 
 
-
-
 def _patch_torch_load_for_rvc() -> None:
     # rvc-python/fairseq load trusted local model checkpoints that require pickle
     # objects. Newer PyTorch defaults torch.load(weights_only=True), which breaks
@@ -63,7 +61,7 @@ class RvcEngine:
             return self._backend_error
         return self._backend_error
 
-    def _load_backend(self) -> Any:
+    def _initialize_backend(self) -> Any:
         if self._rvc is not None:
             return self._rvc
         _patch_torch_load_for_rvc()
@@ -74,14 +72,24 @@ class RvcEngine:
             raise RvcBackendUnavailable(f"rvc-python is not installed or could not be imported: {exc}") from exc
 
         try:
-            index_path = str(self.model_files.index_path) if self.model_files.index_path else ''
-            rvc = RVCInference(device=self.device_status.effective_device, index_path=index_path)
-            rvc.load_model(str(self.model_files.model_path), index_path=index_path)
+            backend_kwargs = {"device": self.device_status.effective_device}
+            load_kwargs: dict[str, Any] = {}
+            if self.model_files.index_path:
+                index_path = str(self.model_files.index_path)
+                backend_kwargs["index_path"] = index_path
+                load_kwargs["index_path"] = index_path
+            rvc = RVCInference(**backend_kwargs)
+            rvc.load_model(str(self.model_files.model_path), **load_kwargs)
         except Exception as exc:
             raise RvcConversionError(f"Failed to initialize RVC model: {exc}") from exc
 
         self._rvc = rvc
         return rvc
+
+    async def _load_backend(self) -> Any:
+        if self._rvc is not None:
+            return self._rvc
+        return await asyncio.to_thread(self._initialize_backend)
 
     async def convert_file(
         self,
@@ -92,7 +100,7 @@ class RvcEngine:
         f0_method: str = "rmvpe",
     ) -> Path:
         _patch_torch_load_for_rvc()
-        rvc = self._load_backend()
+        rvc = await self._load_backend()
         output_fd, output_name = tempfile.mkstemp(suffix=".wav")
         os.close(output_fd)
         output_path = Path(output_name)

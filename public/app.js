@@ -197,7 +197,9 @@ function stopConversation() {
   canStreamMic = false;
   setMicState('idle', 'Mic idle');
   stopPlayback();
-  if (socket?.readyState === WebSocket.OPEN) socket.close();
+  const activeSocket = socket;
+  socket = undefined;
+  if (activeSocket?.readyState !== WebSocket.CLOSED) activeSocket.close();
   processor?.disconnect();
   source?.disconnect();
   micStream?.getTracks().forEach((track) => track.stop());
