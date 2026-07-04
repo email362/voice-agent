@@ -142,11 +142,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await ensure_connected()
             await audio.seek(0)
 
-            def copy_upload() -> None:
+            async def copy_upload() -> None:
                 total_bytes = 0
                 with input_path.open("wb") as handle:
                     while True:
-                        chunk = audio.file.read(1024 * 1024)
+                        if disconnect_cancelled.is_set():
+                            raise asyncio.CancelledError
+                        chunk = await audio.read(1024 * 1024)
                         if not chunk:
                             break
                         total_bytes += len(chunk)
@@ -154,7 +156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             raise UploadedAudioTooLarge
                         handle.write(chunk)
 
-            await asyncio.to_thread(copy_upload)
+            await copy_upload()
             await ensure_connected()
             if disconnect_cancelled.is_set():
                 raise HTTPException(status_code=499, detail="Client disconnected")

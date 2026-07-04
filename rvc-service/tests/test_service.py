@@ -266,6 +266,41 @@ def test_convert_rejects_client_disconnect_before_conversion(monkeypatch):
     assert response.json()["detail"] == "Client disconnected"
 
 
+def test_convert_aborts_upload_copy_when_client_disconnects(monkeypatch):
+    from app.main import create_app
+    from starlette.requests import Request
+    from fastapi import UploadFile
+
+    app = create_app()
+    app.state.engine.convert_file = lambda *args, **kwargs: pytest.fail("conversion should not run")
+
+    disconnect_states = iter([False, True])
+
+    async def disconnected(self):
+        return next(disconnect_states, True)
+
+    read_calls = 0
+
+    async def slow_read(self, size=-1):
+        nonlocal read_calls
+        read_calls += 1
+        await asyncio.sleep(0.15)
+        return b"RIFF....WAVEfmt " if read_calls == 1 else b""
+
+    monkeypatch.setattr(Request, "is_disconnected", disconnected)
+    monkeypatch.setattr(UploadFile, "read", slow_read)
+    client = TestClient(app)
+
+    response = client.post(
+        "/convert",
+        files={"audio": ("input.wav", b"RIFF....WAVEfmt ", "audio/wav")},
+    )
+
+    assert response.status_code == 499
+    assert response.json()["detail"] == "Client disconnected"
+    assert read_calls == 1
+
+
 def test_convert_returns_wav_from_engine(tmp_path):
     from app.main import create_app
 
@@ -709,6 +744,50 @@ def test_initialize_backend_passes_index_path_to_supported_loader(monkeypatch, t
     assert seen["load_kwargs"] == {"index_path": str(index_path)}
 
 
+def test_initialize_backend_retries_without_kwargs_when_signature_is_opaque(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    index_path = tmp_path / "model.index"
+    index_path.write_bytes(b"index")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=index_path, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    original_signature = inspect.signature
+    seen = {}
+
+    class FakeRVCInference:
+        def __init__(self):
+            seen["constructor"] = True
+
+        def load_model(self, model_path):
+            seen["model_path"] = model_path
+
+    def fake_signature(callable_obj):
+        if callable_obj is FakeRVCInference or getattr(callable_obj, "__name__", "") == "load_model":
+            raise TypeError("no signature")
+        return original_signature(callable_obj)
+
+    infer_module = types.ModuleType("rvc_python.infer")
+    infer_module.RVCInference = FakeRVCInference
+    package_module = types.ModuleType("rvc_python")
+    package_module.infer = infer_module
+    monkeypatch.setitem(sys.modules, "rvc_python", package_module)
+    monkeypatch.setitem(sys.modules, "rvc_python.infer", infer_module)
+    monkeypatch.setattr(inspect, "signature", fake_signature)
+
+    backend = engine._initialize_backend()
+
+    assert backend is engine._rvc
+    assert seen["constructor"] is True
+    assert seen["model_path"] == str(model_path)
+
+
 def test_load_backend_initialization_runs_off_thread(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles
@@ -942,6 +1021,50 @@ def test_convert_file_applies_conversion_parameters(monkeypatch, tmp_path):
         "f0method": "harvest",
         "index_rate": 0.75,
     }
+
+
+def test_convert_file_retries_set_params_without_kwargs_when_signature_is_opaque(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    original_signature = inspect.signature
+    seen = {}
+
+    class Backend:
+        def set_params(self):
+            seen["set_params"] = True
+
+        def infer_file(self, input_path, output_path):
+            seen["infer_file"] = (input_path, output_path)
+            Path(output_path).write_bytes(b"RIFFmockWAVEdata")
+
+    def fake_signature(callable_obj):
+        if getattr(callable_obj, "__name__", "") == "set_params":
+            raise TypeError("no signature")
+        return original_signature(callable_obj)
+
+    async def fake_load_backend():
+        return Backend()
+
+    monkeypatch.setattr(inspect, "signature", fake_signature)
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    output_path = asyncio.run(engine.convert_file(input_path, pitch=3, index_rate=0.75, f0_method="harvest"))
+
+    assert seen["set_params"] is True
+    assert seen["infer_file"][0] == str(input_path)
+    assert output_path.exists()
 
 
 def test_convert_file_raises_when_set_params_rejects_parameters(monkeypatch, tmp_path):

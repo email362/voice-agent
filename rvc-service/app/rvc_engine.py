@@ -95,16 +95,21 @@ class RvcEngine:
             raise RvcBackendUnavailable(f"rvc-python is not installed or could not be imported: {exc}") from exc
 
         try:
-            backend_kwargs, _ = self._filter_supported_kwargs(
+            backend_kwargs, backend_signature_known = self._filter_supported_kwargs(
                 RVCInference,
                 {"device": self.device_status.effective_device},
             )
-            rvc = RVCInference(**backend_kwargs)
+            rvc = self._call_with_optional_kwargs(RVCInference, (), backend_kwargs, backend_signature_known)
             load_kwargs: dict[str, Any] = {}
             if self.model_files.index_path:
                 load_kwargs["index_path"] = str(self.model_files.index_path)
-            load_kwargs, _ = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
-            rvc.load_model(str(self.model_files.model_path), **load_kwargs)
+            load_kwargs, load_signature_known = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
+            self._call_with_optional_kwargs(
+                rvc.load_model,
+                (str(self.model_files.model_path),),
+                load_kwargs,
+                load_signature_known,
+            )
         except Exception as exc:
             self._backend_error = str(exc)
             if _is_backend_dependency_error(exc):
@@ -185,13 +190,36 @@ class RvcEngine:
         return {key: value for key, value in kwargs.items() if key in accepted}, True
 
     @staticmethod
+    def _kwargs_rejected(error: TypeError) -> bool:
+        message = str(error).lower()
+        return (
+            "unexpected keyword argument" in message
+            or ("positional arguments but" in message and ("was given" in message or "were given" in message))
+            or "multiple values for argument" in message
+        )
+
+    @staticmethod
+    def _extra_positional_arg_rejected(error: TypeError) -> bool:
+        message = str(error).lower()
+        return "positional arguments but" in message and ("was given" in message or "were given" in message)
+
+    @classmethod
+    def _call_with_optional_kwargs(cls, callable_obj: Any, args: tuple[Any, ...], kwargs: dict[str, Any], signature_known: bool) -> Any:
+        try:
+            return callable_obj(*args, **kwargs)
+        except TypeError as error:
+            if signature_known or not kwargs or not cls._kwargs_rejected(error):
+                raise
+            return callable_obj(*args)
+
+    @staticmethod
     def _should_retry_infer_without_kwargs(error: TypeError, kwargs: dict[str, Any]) -> bool:
         if not kwargs:
             return False
         message = str(error).lower()
         if "unexpected keyword argument" in message:
             return True
-        if "positional arguments but" in message and "were given" in message:
+        if "positional arguments but" in message and ("was given" in message or "were given" in message):
             return True
         if "multiple values for argument" in message:
             return True
@@ -210,7 +238,12 @@ class RvcEngine:
         release_lock = False
         try:
             self._check_cancelled(cancelled)
-            rvc = await self._load_backend(cancelled)
+            try:
+                rvc = await self._load_backend(cancelled)
+            except TypeError as error:
+                if cancelled is None or not self._extra_positional_arg_rejected(error):
+                    raise
+                rvc = await self._load_backend()
             self._check_cancelled(cancelled)
             await self._acquire_conversion_lock(cancelled)
             release_lock = True
@@ -231,11 +264,16 @@ class RvcEngine:
                     filtered_kwargs, infer_signature_known = self._filter_supported_kwargs(rvc.infer_file, kwargs)
                     set_params = getattr(rvc, "set_params", None)
                     if callable(set_params):
-                        set_params_kwargs, _ = self._filter_supported_kwargs(set_params, kwargs)
+                        set_params_kwargs, set_params_signature_known = self._filter_supported_kwargs(set_params, kwargs)
                         if set_params_kwargs:
-                            set_params(**set_params_kwargs)
+                            self._call_with_optional_kwargs(set_params, (), set_params_kwargs, set_params_signature_known)
                     try:
-                        rvc.infer_file(str(input_path), str(output_path), **filtered_kwargs)
+                        self._call_with_optional_kwargs(
+                            rvc.infer_file,
+                            (str(input_path), str(output_path)),
+                            filtered_kwargs,
+                            infer_signature_known,
+                        )
                     except TypeError as error:
                         if infer_signature_known or not self._should_retry_infer_without_kwargs(error, filtered_kwargs):
                             raise
