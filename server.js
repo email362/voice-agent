@@ -19,7 +19,7 @@ const app = Fastify({ logger: true });
 app.register(fastifyStatic, { root: path.join(__dirname, 'public') });
 
 app.get('/health', async () => ({
-  ok: true,
+  ok: Boolean(DEEPGRAM_API_KEY),
   hasDeepgramKey: Boolean(DEEPGRAM_API_KEY),
   rvc: {
     configured: isRvcConfigured(RVC_SERVICE_URL),
@@ -52,6 +52,7 @@ wss.on('connection', (client) => {
   let assistantAudioBytes = 0;
   let assistantAudioGeneration = 0;
   let assistantAudioConversionController;
+  let assistantAudioFlushChain = Promise.resolve();
   let rvcDisabledForSession = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
   const clearAssistantAudioBuffer = () => {
@@ -135,6 +136,12 @@ wss.on('connection', (client) => {
       if (assistantAudioConversionController === conversionController) assistantAudioConversionController = undefined;
     }
   };
+  const queueAssistantAudioFlush = (generation) => {
+    assistantAudioFlushChain = assistantAudioFlushChain
+      .catch(() => {})
+      .then(() => flushAssistantAudio(generation));
+    return assistantAudioFlushChain;
+  };
 
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));
   deepgram.on('message', async (data, isBinary) => {
@@ -163,7 +170,7 @@ wss.on('connection', (client) => {
     if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
     if (event.type === 'AgentAudioDone') {
       const generation = assistantAudioGeneration;
-      await flushAssistantAudio(generation);
+      void queueAssistantAudioFlush(generation);
     }
   });
   deepgram.on('error', (error) => endConversation(error.message));

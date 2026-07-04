@@ -67,10 +67,13 @@ class RvcEngine:
         except Exception as exc:
             self._backend_error = str(exc)
             return False
+        self._backend_error = None
         return True
 
     @property
     def backend_error(self) -> str | None:
+        if self._rvc is not None:
+            return None
         if self._backend_error is None and not self.backend_available:
             return self._backend_error
         return self._backend_error
@@ -97,18 +100,26 @@ class RvcEngine:
             load_kwargs = self._filter_supported_kwargs(rvc.load_model, load_kwargs)
             rvc.load_model(str(self.model_files.model_path), **load_kwargs)
         except Exception as exc:
+            self._backend_error = str(exc)
             if _is_backend_dependency_error(exc):
-                self._backend_error = str(exc)
                 raise RvcBackendUnavailable(f"rvc-python or one of its dependencies could not be imported: {exc}") from exc
             raise RvcConversionError(f"Failed to initialize RVC model: {exc}") from exc
 
         self._rvc = rvc
+        self._backend_error = None
         return rvc
 
     async def _load_backend(self) -> Any:
         if self._rvc is not None:
             return self._rvc
         return await asyncio.to_thread(self._initialize_backend)
+
+    async def ensure_ready(self) -> bool:
+        try:
+            await self._load_backend()
+        except Exception:
+            return False
+        return True
 
     @staticmethod
     def _filter_supported_kwargs(callable_obj: Any, kwargs: dict[str, Any]) -> dict[str, Any]:

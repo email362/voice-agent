@@ -45,6 +45,8 @@ const fs = require('node:fs');
   assert.match(server, /RVC_SERVICE_URL/, 'server should read RVC_SERVICE_URL');
   assert.match(server, /process\.env\.RVC_SERVICE_URL \?\? 'http:\/\/127\.0\.0\.1:5055'/, 'server should preserve an empty RVC_SERVICE_URL to disable conversion');
   assert.match(server, /AgentAudioDone/, 'server should flush buffered assistant audio on AgentAudioDone');
+  assert.match(server, /let assistantAudioFlushChain = Promise\.resolve\(\);/, 'server should serialize assistant audio flushes');
+  assert.match(server, /queueAssistantAudioFlush\(generation\)/, 'server should queue assistant audio flushes in order');
   assert.match(server, /convertPcmWithRvc/, 'server should call RVC conversion helper');
   assert.match(server, /signal: conversionController\.signal/, 'server should pass a cancellation signal into RVC conversion');
   assert.match(server, /abortAssistantAudioConversion\(\);/, 'server should abort in-flight conversion when audio is discarded');
@@ -62,7 +64,8 @@ const fs = require('node:fs');
   const main = fs.readFileSync('rvc-service/app/main.py', 'utf8');
   assert.match(main, /class ConvertUploadLimitMiddleware/, 'RVC convert endpoint should limit request bodies before multipart parsing');
   assert.match(main, /app\.add_middleware\(ConvertUploadLimitMiddleware, max_request_bytes=settings\.max_convert_upload_bytes \+ 1024 \* 1024\)/, 'RVC convert endpoint should apply the body limit middleware');
-  assert.match(main, /"ok": model_files is not None and backend_available,/, 'RVC health should fail when the backend cannot be imported');
+  assert.match(main, /backend_ready = bool\(engine and await engine\.ensure_ready\(\)\)/, 'RVC health should initialize the backend before reporting readiness');
+  assert.match(main, /"ok": model_files is not None and backend_ready,/, 'RVC health should fail when the backend cannot be initialized');
   assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should still enforce an upload size cap');
 
   console.log('rvc integration checks passed');

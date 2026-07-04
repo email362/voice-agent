@@ -114,7 +114,10 @@ def test_health_reports_cuda_default_and_model_status(monkeypatch):
     from app.main import create_app
     from app.rvc_engine import RvcEngine
 
-    monkeypatch.setattr(RvcEngine, "backend_available", property(lambda self: True))
+    async def ready(self):
+        return True
+
+    monkeypatch.setattr(RvcEngine, "ensure_ready", ready)
 
     client = TestClient(create_app())
     response = client.get("/health")
@@ -134,7 +137,10 @@ def test_health_returns_not_ok_when_backend_unavailable(monkeypatch):
     from app.main import create_app
     from app.rvc_engine import RvcEngine
 
-    monkeypatch.setattr(RvcEngine, "backend_available", property(lambda self: False))
+    async def ready(self):
+        return False
+
+    monkeypatch.setattr(RvcEngine, "ensure_ready", ready)
 
     app = create_app()
     app.state.engine._backend_error = "rvc-python is not installed"
@@ -147,6 +153,26 @@ def test_health_returns_not_ok_when_backend_unavailable(monkeypatch):
     assert body["ok"] is False
     assert body["backend"]["available"] is False
     assert body["backend"]["error"] == "rvc-python is not installed"
+
+
+def test_health_returns_not_ok_when_backend_initialization_fails(monkeypatch):
+    from app.main import create_app
+    from app.rvc_engine import RvcEngine
+
+    async def ready(self):
+        self._backend_error = "Failed to initialize RVC model: boom"
+        return False
+
+    monkeypatch.setattr(RvcEngine, "ensure_ready", ready)
+
+    client = TestClient(create_app())
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["backend"]["available"] is False
+    assert body["backend"]["error"] == "Failed to initialize RVC model: boom"
 
 
 def test_convert_returns_503_when_backend_unavailable(monkeypatch):

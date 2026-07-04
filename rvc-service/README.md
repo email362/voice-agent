@@ -83,7 +83,7 @@ RVC_HOST=0.0.0.0 RVC_PORT=5055 RVC_DEVICE=cuda:0 python run.py
 
 ### `GET /health`
 
-Returns model discovery, configured/effective device, CUDA fallback status, and whether the `rvc-python` backend can be imported.
+Returns model discovery, configured/effective device, CUDA fallback status, and whether the `rvc-python` backend can load the configured model.
 
 Example:
 
@@ -112,7 +112,7 @@ curl -X POST "http://127.0.0.1:5055/convert?pitch=0&index_rate=0.5&f0_method=rmv
   --output converted.wav
 ```
 
-If `rvc-python` or its Torch dependencies are not installed, `/convert` returns `503` with a clear error. `/health` still works and shows model discovery status, configured device, effective fallback device, and backend import status.
+If `rvc-python` or its Torch dependencies are not installed, `/convert` returns `503` with a clear error. `/health` still works and shows model discovery status, configured device, effective fallback device, and backend readiness.
 
 ## Smoke Checks
 

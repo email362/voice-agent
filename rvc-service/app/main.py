@@ -88,9 +88,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        backend_available = bool(engine and engine.backend_available)
+        backend_ready = bool(engine and await engine.ensure_ready())
+        backend_error = engine.backend_error if engine else model_error
         return {
-            "ok": model_files is not None and backend_available,
+            "ok": model_files is not None and backend_ready,
             "configured_device": device_status.configured_device,
             "effective_device": device_status.effective_device,
             "cuda_available": device_status.cuda_available,
@@ -103,8 +104,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "backend": {
                 "name": "rvc-python",
-                "available": backend_available,
-                "error": engine.backend_error if engine else None,
+                "available": backend_ready,
+                "error": backend_error,
             },
         }
 

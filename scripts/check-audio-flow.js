@@ -29,6 +29,7 @@ assert.match(app, /let conversationGeneration = 0;/, 'app.js should track startu
 assert.match(app, /if \(generation !== conversationGeneration\) \{[\s\S]*return;/, 'app.js should abort startup when stop is requested during mic setup');
 assert.match(app, /stopBtn\.addEventListener\('click', \(\) => stopConversation\(\)\);/, 'app.js should stop the conversation from the UI button');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
+assert.match(server, /ok: Boolean\(DEEPGRAM_API_KEY\)/, 'server.js health should reflect proxy readiness');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');
 assert.match(server, /discardAssistantAudioBuffer\(\);/, 'server.js should discard queued assistant audio on barge-in or disconnect');
