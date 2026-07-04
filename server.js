@@ -52,7 +52,8 @@ wss.on('connection', (client) => {
   let assistantAudioBytes = 0;
   let assistantAudioGeneration = 0;
   let assistantAudioConversionController;
-  let assistantAudioFlushChain = Promise.resolve();
+  let assistantAudioFlushRunning = false;
+  let assistantAudioFlushQueue = [];
   let rvcDisabledForSession = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
   const clearAssistantAudioBuffer = () => {
@@ -66,6 +67,7 @@ wss.on('connection', (client) => {
   const discardAssistantAudioBuffer = () => {
     assistantAudioGeneration += 1;
     abortAssistantAudioConversion();
+    assistantAudioFlushQueue = [];
     clearAssistantAudioBuffer();
   };
   const logAudioProgress = () => {
@@ -98,22 +100,19 @@ wss.on('connection', (client) => {
     if (deepgram.readyState !== WebSocket.CLOSED) deepgram.close();
   };
 
-  const flushAssistantAudio = async (generation) => {
-    if (generation !== assistantAudioGeneration || !assistantAudioChunks.length) return;
-    const chunks = assistantAudioChunks;
-    const byteLength = assistantAudioBytes;
-    clearAssistantAudioBuffer();
+  const processAssistantAudioFlush = async (flush) => {
+    if (flush.generation !== assistantAudioGeneration || !flush.chunks.length) return;
 
     if (!rvcEnabled()) {
-      sendOriginalAssistantAudio(chunks);
+      sendOriginalAssistantAudio(flush.chunks);
       return;
     }
 
     const conversionController = new AbortController();
     assistantAudioConversionController = conversionController;
     try {
-      app.log.info({ byteLength, serviceUrl: RVC_SERVICE_URL }, 'converting assistant audio with RVC');
-      const converted = await convertPcmWithRvc(Buffer.concat(chunks, byteLength), {
+      app.log.info({ byteLength: flush.byteLength, serviceUrl: RVC_SERVICE_URL }, 'converting assistant audio with RVC');
+      const converted = await convertPcmWithRvc(Buffer.concat(flush.chunks, flush.byteLength), {
         serviceUrl: RVC_SERVICE_URL,
         sampleRate: 24000,
         channels: 1,
@@ -124,23 +123,41 @@ wss.on('connection', (client) => {
         timeoutMs: RVC_TIMEOUT_MS,
         signal: conversionController.signal,
       });
-      app.log.info({ inputBytes: byteLength, outputBytes: converted.length }, 'RVC conversion complete');
-      if (generation !== assistantAudioGeneration) return;
+      app.log.info({ inputBytes: flush.byteLength, outputBytes: converted.length }, 'RVC conversion complete');
+      if (flush.generation !== assistantAudioGeneration) return;
       sendToClient(converted, true);
     } catch (error) {
-      if (generation !== assistantAudioGeneration) return;
+      if (flush.generation !== assistantAudioGeneration) return;
       rvcDisabledForSession = true;
-      app.log.error({ err: error, byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
-      sendOriginalAssistantAudio(chunks);
+      app.log.error({ err: error, byteLength: flush.byteLength }, 'RVC conversion failed; falling back to original assistant audio for this session');
+      sendOriginalAssistantAudio(flush.chunks);
     } finally {
       if (assistantAudioConversionController === conversionController) assistantAudioConversionController = undefined;
     }
   };
+  const drainAssistantAudioFlushQueue = async () => {
+    if (assistantAudioFlushRunning) return;
+    assistantAudioFlushRunning = true;
+    try {
+      while (assistantAudioFlushQueue.length) {
+        const flush = assistantAudioFlushQueue.shift();
+        await processAssistantAudioFlush(flush);
+      }
+    } finally {
+      assistantAudioFlushRunning = false;
+      if (assistantAudioFlushQueue.length) void drainAssistantAudioFlushQueue();
+    }
+  };
   const queueAssistantAudioFlush = (generation) => {
-    assistantAudioFlushChain = assistantAudioFlushChain
-      .catch(() => {})
-      .then(() => flushAssistantAudio(generation));
-    return assistantAudioFlushChain;
+    if (generation !== assistantAudioGeneration || !assistantAudioChunks.length) return;
+    const flush = {
+      generation,
+      chunks: assistantAudioChunks,
+      byteLength: assistantAudioBytes,
+    };
+    clearAssistantAudioBuffer();
+    assistantAudioFlushQueue.push(flush);
+    void drainAssistantAudioFlushQueue();
   };
 
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));

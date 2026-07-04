@@ -430,6 +430,53 @@ def test_convert_file_honors_cancellation_before_inference(monkeypatch, tmp_path
     assert loaded is True
 
 
+def test_convert_file_honors_cancellation_during_inference(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    infer_started = threading.Event()
+
+    class Backend:
+        def infer_file(self, input_path, output_path, **kwargs):
+            infer_started.set()
+            time.sleep(0.5)
+            Path(output_path).write_bytes(b"RIFFmockWAVEdata")
+
+    backend = Backend()
+
+    async def fake_load_backend():
+        return backend
+
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    async def run_conversion():
+        cancelled = threading.Event()
+
+        def is_cancelled():
+            return cancelled.is_set()
+
+        task = asyncio.create_task(engine.convert_file(input_path, cancelled=is_cancelled))
+        assert await asyncio.to_thread(infer_started.wait, 2)
+        cancelled.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run_conversion())
+
+    assert not engine._conversion_lock.locked()
+
+
 def test_initialize_backend_omits_index_path_when_missing(monkeypatch, tmp_path):
     from app.device import DeviceStatus
     from app.model_discovery import ModelFiles

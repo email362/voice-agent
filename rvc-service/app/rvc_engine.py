@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import os
 import tempfile
@@ -194,7 +195,25 @@ class RvcEngine:
                         # Some rvc-python versions only accept input/output paths. Keep a working conversion path.
                         rvc.infer_file(str(input_path), str(output_path))
 
-                await asyncio.to_thread(run_inference)
+                infer_task = asyncio.create_task(asyncio.to_thread(run_inference))
+                if cancelled is not None:
+                    cancel_task = asyncio.create_task(self._wait_for_cancellation(cancelled))
+                    done, pending = await asyncio.wait(
+                        {infer_task, cancel_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if cancel_task in done:
+                        infer_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await infer_task
+                        output_path.unlink(missing_ok=True)
+                        raise asyncio.CancelledError
+                    cancel_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await cancel_task
+                    await infer_task
+                else:
+                    await infer_task
             except asyncio.CancelledError:
                 output_path.unlink(missing_ok=True)
                 raise
@@ -203,3 +222,9 @@ class RvcEngine:
                 raise RvcConversionError(f"RVC conversion failed: {exc}") from exc
 
             return output_path
+
+    @staticmethod
+    async def _wait_for_cancellation(cancelled: Callable[[], bool]) -> None:
+        while not cancelled():
+            await asyncio.sleep(0.05)
+        raise asyncio.CancelledError
