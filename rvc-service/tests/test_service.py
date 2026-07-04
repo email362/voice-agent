@@ -1,5 +1,6 @@
-from pathlib import Path
 import asyncio
+import inspect
+from pathlib import Path
 import tempfile
 import sys
 import types
@@ -833,6 +834,44 @@ def test_convert_file_does_not_mask_infer_file_type_error(monkeypatch, tmp_path)
     async def fake_load_backend():
         return Backend()
 
+    monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
+
+    input_path = tmp_path / "input.wav"
+    input_path.write_bytes(b"RIFF....WAVEfmt ")
+
+    with pytest.raises(RvcConversionError, match="backend failure"):
+        asyncio.run(engine.convert_file(input_path, pitch=3, index_rate=0.75, f0_method="harvest"))
+
+
+def test_convert_file_does_not_retry_generic_type_error_without_signature(monkeypatch, tmp_path):
+    from app.device import DeviceStatus
+    from app.model_discovery import ModelFiles
+    from app.rvc_engine import RvcConversionError, RvcEngine
+
+    model_path = tmp_path / "model.pth"
+    model_path.write_bytes(b"model")
+    engine = RvcEngine(
+        ModelFiles(model_path=model_path, index_path=None, searched_dirs=[]),
+        DeviceStatus(configured_device="cpu", effective_device="cpu", cuda_available=None, fallback_reason=None),
+    )
+
+    original_signature = inspect.signature
+
+    class Backend:
+        def infer_file(self, input_path, output_path, **kwargs):
+            if kwargs:
+                raise TypeError("backend failure")
+            Path(output_path).write_bytes(b"RIFFmockWAVEdata")
+
+    def fake_signature(callable_obj):
+        if getattr(callable_obj, "__name__", "") == "infer_file":
+            raise TypeError("no signature")
+        return original_signature(callable_obj)
+
+    async def fake_load_backend():
+        return Backend()
+
+    monkeypatch.setattr(inspect, "signature", fake_signature)
     monkeypatch.setattr(engine, "_load_backend", fake_load_backend)
 
     input_path = tmp_path / "input.wav"

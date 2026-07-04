@@ -153,6 +153,19 @@ class RvcEngine:
         accepted = set(signature.parameters)
         return {key: value for key, value in kwargs.items() if key in accepted}, True
 
+    @staticmethod
+    def _should_retry_infer_without_kwargs(error: TypeError, kwargs: dict[str, Any]) -> bool:
+        if not kwargs:
+            return False
+        message = str(error).lower()
+        if "unexpected keyword argument" in message:
+            return True
+        if "positional arguments but" in message and "were given" in message:
+            return True
+        if "multiple values for argument" in message:
+            return True
+        return False
+
     async def convert_file(
         self,
         input_path: Path,
@@ -190,8 +203,8 @@ class RvcEngine:
                             set_params(**set_params_kwargs)
                     try:
                         rvc.infer_file(str(input_path), str(output_path), **filtered_kwargs)
-                    except TypeError:
-                        if infer_signature_known:
+                    except TypeError as error:
+                        if infer_signature_known or not self._should_retry_infer_without_kwargs(error, filtered_kwargs):
                             raise
                         # Some rvc-python versions only accept input/output paths. Keep a working conversion path.
                         rvc.infer_file(str(input_path), str(output_path))

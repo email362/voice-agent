@@ -111,7 +111,7 @@ wss.on('connection', (client) => {
       }
       if (!flush.ready) return;
       assistantAudioFlushQueue.shift();
-      if (flush.fallbackToOriginal || !flush.convertedAudio) {
+      if (rvcDisabledForSession || flush.fallbackToOriginal || !flush.convertedAudio) {
         sendOriginalAssistantAudio(flush.chunks);
       } else {
         sendToClient(flush.convertedAudio, true);

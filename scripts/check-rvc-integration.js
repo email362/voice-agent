@@ -69,6 +69,7 @@ const fs = require('node:fs');
   assert.match(server, /abortAssistantAudioConversion\(\);/, 'server should abort in-flight conversion when audio is discarded');
   assert.match(server, /if \(conversionController\.signal\.aborted\) \{[\s\S]*finalizeAssistantAudioFlush\(flush\);[\s\S]*return;[\s\S]*\}/, 'server should release queued assistant audio when an in-flight conversion is aborted');
   assert.match(server, /rvcDisabledForSession = true;[\s\S]*finalizeAssistantAudioFlush\(flush\);/, 'server should mark the current assistant buffer for fallback when RVC fails');
+  assert.match(server, /if \(rvcDisabledForSession \|\| flush\.fallbackToOriginal \|\| !flush\.convertedAudio\) \{/, 'server should send original audio after RVC is disabled for the session');
   assert.match(server, /flush\.generation !== assistantAudioGeneration[\s\S]*sendOriginalAssistantAudio\(flush\.chunks\)/, 'server should skip stale fallback audio after generation changes');
 
   const engine = fs.readFileSync('rvc-service/app/rvc_engine.py', 'utf8');
