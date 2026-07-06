@@ -136,7 +136,13 @@ These tests prove:
 
 The Node/Fastify Deepgram app can now call this service after each assistant utterance. The integration buffers Deepgram raw PCM assistant audio until `AgentAudioDone`, wraps it as WAV, posts it to `POST /convert`, preserves event ordering while conversion runs, and suppresses stale converted playback if the user barges in again. If conversion fails or times out, the Node app falls back to the original Deepgram audio for that session.
 
-Start RVC first:
+For one-command local development from the project root:
+
+```bash
+npm run dev:rvc
+```
+
+Or start RVC first:
 
 ```bash
 cd rvc-service

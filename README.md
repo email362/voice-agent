@@ -42,6 +42,12 @@ See [.env.example](./.env.example) and the detailed POC document for the full li
 The RVC service is separate from the Node app and can be run only when you want local voice conversion:
 
 ```bash
+npm run dev:rvc
+```
+
+That starts the RVC service with default settings and then starts the Node app with `RVC_SERVICE_URL` pointing at it. To run the services manually:
+
+```bash
 cd rvc-service
 source .venv/bin/activate
 RVC_DEVICE=cuda:0 python run.py

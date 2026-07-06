@@ -57,6 +57,14 @@ const fs = require('node:fs');
   assert.match(app, /queuePlayback\(message\.data, playbackToken\)/, 'message handler should route binary audio through serialized, format-aware playback');
 
   const server = fs.readFileSync('server.js', 'utf8');
+  const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  assert.equal(packageJson.scripts['dev:rvc'], 'bash scripts/dev-with-rvc.sh', 'package.json should expose a one-command local RVC dev script');
+  const devScript = fs.readFileSync('scripts/dev-with-rvc.sh', 'utf8');
+  assert.match(devScript, /RVC_DIR="\$ROOT_DIR\/rvc-service"/, 'dev script should resolve the RVC service from the project root');
+  assert.match(devScript, /"\$RVC_DIR\/\.venv\/bin\/python" run\.py/, 'dev script should start RVC with the default Python 3.10 .venv');
+  assert.match(devScript, /RVC_SERVICE_URL="\$\{RVC_SERVICE_URL:-http:\/\/\$RVC_HOST:\$RVC_PORT\}"/, 'dev script should derive the default RVC service URL from host and port');
+  assert.match(devScript, /RVC_SERVICE_URL="\$RVC_SERVICE_URL" npm start/, 'dev script should start Node with the configured RVC service URL');
+  assert.match(devScript, /trap cleanup EXIT INT TERM/, 'dev script should stop the background RVC process when local dev exits');
   assert.match(server, /RVC_SERVICE_URL/, 'server should read RVC_SERVICE_URL');
   assert.match(server, /process\.env\.RVC_SERVICE_URL \?\? 'http:\/\/127\.0\.0\.1:5055'/, 'server should preserve an empty RVC_SERVICE_URL to disable conversion');
   assert.match(server, /AgentAudioDone/, 'server should flush buffered assistant audio on AgentAudioDone');
