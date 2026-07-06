@@ -18,6 +18,20 @@ const RVC_F0_METHOD = process.env.RVC_F0_METHOD || 'rmvpe';
 const app = Fastify({ logger: true });
 app.register(fastifyStatic, { root: path.join(__dirname, 'public') });
 
+function measurePcm16Level(buffer) {
+  let peak = 0;
+  let sumSquares = 0;
+  const samples = Math.floor(buffer.length / 2);
+  if (!samples) return { peak: 0, rms: 0 };
+  for (let index = 0; index < samples; index += 1) {
+    const value = buffer.readInt16LE(index * 2) / 32768;
+    const magnitude = Math.abs(value);
+    if (magnitude > peak) peak = magnitude;
+    sumSquares += value * value;
+  }
+  return { peak, rms: Math.sqrt(sumSquares / samples) };
+}
+
 app.get('/health', async () => ({
   ok: Boolean(DEEPGRAM_API_KEY),
   hasDeepgramKey: Boolean(DEEPGRAM_API_KEY),
@@ -47,13 +61,15 @@ wss.on('connection', (client) => {
 
   let clientAudioFrames = 0;
   let clientAudioBytes = 0;
+  let clientAudioPeak = 0;
+  let clientAudioSumSquares = 0;
+  let clientAudioSamples = 0;
   let lastClientAudioLogAt = Date.now();
   let assistantAudioChunks = [];
   let assistantAudioBytes = 0;
   let assistantAudioGeneration = 0;
   let assistantAudioFlushRunning = false;
   let assistantAudioFlushQueue = [];
-  let assistantAudioSuppressed = false;
   let rvcDisabledForSession = false;
   let deepgramClosed = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
@@ -65,7 +81,6 @@ wss.on('connection', (client) => {
     assistantAudioFlushQueue.forEach((flush) => flush.controller?.abort());
   };
   const discardAssistantAudioBuffer = () => {
-    assistantAudioSuppressed = true;
     assistantAudioGeneration += 1;
     abortAssistantAudioConversion();
     assistantAudioFlushQueue = [];
@@ -84,7 +99,19 @@ wss.on('connection', (client) => {
     const now = Date.now();
     if (now - lastClientAudioLogAt < 2000) return;
     lastClientAudioLogAt = now;
-    app.log.info({ clientAudioFrames, clientAudioBytes }, 'client audio forwarded to Deepgram');
+    const clientAudioRms = clientAudioSamples ? Math.sqrt(clientAudioSumSquares / clientAudioSamples) : 0;
+    app.log.info(
+      {
+        clientAudioFrames,
+        clientAudioBytes,
+        clientAudioPeak: Number(clientAudioPeak.toFixed(4)),
+        clientAudioRms: Number(clientAudioRms.toFixed(4)),
+      },
+      'client audio forwarded to Deepgram',
+    );
+    clientAudioPeak = 0;
+    clientAudioSumSquares = 0;
+    clientAudioSamples = 0;
   };
 
   const deepgram = new WebSocket(DEEPGRAM_AGENT_URL, {
@@ -98,9 +125,7 @@ wss.on('connection', (client) => {
     if (deepgram.readyState === WebSocket.OPEN) deepgram.send(data, { binary: isBinary });
   };
   const shouldBufferAssistantAudio = () =>
-    !assistantAudioSuppressed && (
-      rvcEnabled() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning
-    );
+    rvcEnabled() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning;
 
   const sendOriginalAssistantAudio = (chunks) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
@@ -223,7 +248,6 @@ wss.on('connection', (client) => {
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));
   deepgram.on('message', async (data, isBinary) => {
     if (isBinary) {
-      if (assistantAudioSuppressed) return;
       if (shouldBufferAssistantAudio()) {
         const chunk = Buffer.from(data);
         assistantAudioChunks.push(chunk);
@@ -247,7 +271,6 @@ wss.on('connection', (client) => {
     sendToClient(data, false);
     if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
     if (event.type === 'AgentAudioDone') {
-      assistantAudioSuppressed = false;
       const generation = assistantAudioGeneration;
       void queueAssistantAudioFlush(generation);
     }
@@ -264,6 +287,10 @@ wss.on('connection', (client) => {
       if (isBinary) {
         clientAudioFrames += 1;
         clientAudioBytes += data.length;
+        const level = measurePcm16Level(data);
+        clientAudioPeak = Math.max(clientAudioPeak, level.peak);
+        clientAudioSumSquares += level.rms * level.rms * Math.floor(data.length / 2);
+        clientAudioSamples += Math.floor(data.length / 2);
         logAudioProgress();
       } else {
         try {

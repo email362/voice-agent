@@ -17,9 +17,7 @@ assert.match(app, /if \(!canStreamMic \|\| socket\?\.readyState !== WebSocket\.O
 assert.match(app, /event\.type === 'SettingsApplied'[\s\S]*canStreamMic = true;[\s\S]*setMicState\('live', 'Mic live'\)/, 'app.js should enable mic streaming and show Mic live after SettingsApplied');
 assert.match(app, /setMicState\('streaming', `Mic streaming \(\$\{outboundAudioFrames\} frames\)`\)/, 'app.js should show Mic streaming once frames are sent');
 assert.match(app, /event\.type === 'UserStartedSpeaking'[\s\S]*stopPlayback\(\)/, 'app.js should stop queued playback when Deepgram hears the user');
-assert.match(app, /let assistantPlaybackSuppressed = false;/, 'app.js should track when assistant audio is muted after barge-in');
-assert.match(app, /if \(assistantPlaybackSuppressed\) return;/, 'app.js should drop late assistant binary frames after barge-in');
-assert.match(app, /event\.type === 'AgentAudioDone'[\s\S]*assistantPlaybackSuppressed = false;/, 'app.js should re-enable assistant playback after the current turn ends');
+assert.doesNotMatch(app, /assistantPlaybackSuppressed/, 'app.js should not suppress the next assistant turn while waiting for AgentAudioDone');
 assert.match(app, /try \{[\s\S]*event = JSON\.parse\(message\.data\);[\s\S]*\} catch \{[\s\S]*return;[\s\S]*\}/, 'app.js should ignore unexpected non-JSON text frames');
 assert.match(app, /playbackNodes\.add\(node\)/, 'app.js should track playback nodes for cancellation');
 assert.match(app, /const conversationSocket = new WebSocket\(/, 'app.js should capture the socket instance per conversation');
@@ -34,11 +32,13 @@ assert.match(app, /stopBtn\.addEventListener\('click', \(\) => stopConversation\
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
 assert.match(server, /ok: Boolean\(DEEPGRAM_API_KEY\)/, 'server.js health should reflect proxy readiness');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
+assert.match(server, /function measurePcm16Level\(buffer\)/, 'server.js should measure incoming PCM levels for input diagnostics');
+assert.match(server, /clientAudioPeak = Math\.max\(clientAudioPeak, level\.peak\);/, 'server.js should track peak mic level while forwarding audio');
+assert.match(server, /clientAudioRms: Number\(clientAudioRms\.toFixed\(4\)\)/, 'server.js should log RMS mic level with audio progress');
 assert.match(server, /Deepgram event/, 'server.js should log Deepgram event types when DEBUG_AUDIO=1');
 assert.match(server, /discardAssistantAudioBuffer\(\);/, 'server.js should discard queued assistant audio on barge-in or disconnect');
-assert.match(server, /let assistantAudioSuppressed = false;/, 'server.js should track whether assistant audio is muted after barge-in');
-assert.match(server, /if \(assistantAudioSuppressed\) return;[\s\S]*if \(shouldBufferAssistantAudio\(\)\) \{/, 'server.js should drop late assistant audio after barge-in');
-assert.match(server, /event\.type === 'AgentAudioDone'[\s\S]*assistantAudioSuppressed = false;/, 'server.js should re-enable assistant audio after the current turn ends');
+assert.doesNotMatch(server, /assistantAudioSuppressed/, 'server.js should not suppress the next assistant turn while waiting for AgentAudioDone');
+assert.match(server, /if \(shouldBufferAssistantAudio\(\)\) \{/, 'server.js should keep buffering assistant audio for RVC after barge-in cancellation');
 assert.match(server, /const closeClientAfterAssistantAudio = \(\) => \{[\s\S]*if \(!deepgramClosed\) return;[\s\S]*if \(assistantAudioFlushQueue\.length\) return;[\s\S]*if \(assistantAudioChunks\.length\) \{[\s\S]*discardAssistantAudioBuffer\(\);[\s\S]*\}[\s\S]*if \(client\.readyState === WebSocket\.OPEN\) client\.close\(\);[\s\S]*\};/, 'server.js should defer browser close until pending assistant audio is handled');
 assert.match(server, /deepgram\.on\('close', \(code, reason\) => \{[\s\S]*deepgramClosed = true;[\s\S]*closeClientAfterAssistantAudio\(\);[\s\S]*\}\);/, 'server.js should wait for buffered assistant audio before closing the browser socket');
 
