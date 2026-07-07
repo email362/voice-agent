@@ -297,12 +297,9 @@ wss.on('connection', (client) => {
     if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
     if (event.type === 'AgentAudioDone') {
       const generation = assistantAudioGeneration;
-      if (streamingEnabled()) {
-        segmenter.flush().forEach((segment) => enqueueAssistantSegment(generation, segment));
-      } else {
-        queueAssistantAudioFlush(generation, assistantAudioChunks, assistantAudioBytes);
-        clearAssistantAudioBuffer();
-      }
+      segmenter.flush().forEach((segment) => enqueueAssistantSegment(generation, segment));
+      queueAssistantAudioFlush(generation, assistantAudioChunks, assistantAudioBytes);
+      clearAssistantAudioBuffer();
     }
   });
   deepgram.on('error', (error) => endConversation(error.message));
