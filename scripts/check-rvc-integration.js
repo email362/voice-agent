@@ -119,6 +119,9 @@ const fs = require('node:fs');
   const segmenterModule = fs.readFileSync('assistant-audio-segmenter.js', 'utf8');
   assert.match(segmenterModule, /function createAssistantAudioSegmenter\(/, 'segmenter module should export a factory');
 
+  assert.match(browser, /const PLAYBACK_LEAD_SECONDS =/, 'browser should define a playback lead constant');
+  assert.match(browser, /PLAYBACK_LEAD_SECONDS/, 'browser should apply the playback lead when scheduling');
+
   console.log('rvc integration checks passed');
 })().catch((error) => {
   console.error(error);

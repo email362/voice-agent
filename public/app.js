@@ -1,4 +1,5 @@
 const SAMPLE_RATE = 24000;
+const PLAYBACK_LEAD_SECONDS = 0.08;
 const startBtn = document.querySelector('#startBtn');
 const stopBtn = document.querySelector('#stopBtn');
 const statusEl = document.querySelector('#status');
@@ -128,7 +129,8 @@ function scheduleAudioBuffer(audioBuffer, generation = playbackGeneration) {
   playbackNodes.add(node);
   node.addEventListener('ended', () => playbackNodes.delete(node), { once: true });
   node.connect(audioContext.destination);
-  const startAt = Math.max(audioContext.currentTime, nextPlaybackTime);
+  const earliestStart = audioContext.currentTime + PLAYBACK_LEAD_SECONDS;
+  const startAt = Math.max(earliestStart, nextPlaybackTime);
   node.start(startAt);
   nextPlaybackTime = startAt + audioBuffer.duration;
 }
