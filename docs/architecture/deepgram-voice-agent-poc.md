@@ -97,7 +97,7 @@ PATH="$HOME/.nvm/versions/node/v24.16.0/bin:$PATH" \
   npm start
 ```
 
-The Node proxy buffers assistant PCM audio until Deepgram sends `AgentAudioDone`, posts it to `POST /convert`, then sends the converted WAV to the browser. It keeps turn ordering intact while conversion runs and drops stale converted audio if the user barges in again. If RVC fails or times out, it falls back to the original Deepgram audio for that session.
+The Node proxy buffers assistant PCM audio until Deepgram sends `AgentAudioDone`, posts it to `POST /convert`, then sends the converted WAV to the browser. It keeps turn ordering intact while conversion runs and drops stale converted audio if the user barges in again. If RVC fails or times out, it falls back to the original Deepgram audio for that session. With streaming enabled (`RVC_STREAMING=1`, the default), the proxy splits assistant PCM at silence gaps and converts/emits each segment in order so playback starts before the full turn completes, still preserving ordering and barge-in.
 
 ## Environment variables
 
@@ -115,6 +115,8 @@ See `.env.example` for templates:
 - `RVC_PITCH`, `RVC_INDEX_RATE`, `RVC_F0_METHOD` — optional conversion parameters forwarded to the RVC service.
 - `RVC_HOST`, `RVC_PORT` — optional RVC service bind address and port. Defaults are `127.0.0.1` and `5055`.
 - `RVC_PROJECT_ROOT`, `RVC_MODELS_DIR`, `RVC_MODEL_PATH`, `RVC_INDEX_PATH` — optional RVC service model discovery overrides. See [`rvc-service/README.md`](../../rvc-service/README.md) for the search order.
+- `RVC_STREAMING` — set `0` to disable streaming and buffer the whole assistant turn before RVC conversion. Defaults to `1` (streaming on).
+- `RVC_SEGMENT_SILENCE_MS`, `RVC_SEGMENT_SILENCE_RMS`, `RVC_SEGMENT_MIN_MS`, `RVC_SEGMENT_MAX_MS` — silence-gap segmentation tuning for streaming mode. Defaults are `250`, `0.01`, `400`, `4000`.
 
 ## Notes
 

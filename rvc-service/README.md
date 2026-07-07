@@ -169,3 +169,5 @@ Service and integration environment variables:
 - `RVC_INDEX_RATE` - retrieval index rate, default `0.5`.
 - `RVC_F0_METHOD` - f0 method, default `rmvpe`.
 - `DEBUG_AUDIO` - set to `1` to emit aggregate client audio and Deepgram event logs.
+- `RVC_STREAMING` - stream assistant audio in silence-delimited segments. Defaults to `1`; set `0` for whole-turn conversion.
+- `RVC_SEGMENT_SILENCE_MS`, `RVC_SEGMENT_SILENCE_RMS`, `RVC_SEGMENT_MIN_MS`, `RVC_SEGMENT_MAX_MS` - streaming segmentation tuning. Defaults `250`, `0.01`, `400`, `4000`.
