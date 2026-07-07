@@ -104,6 +104,21 @@ const fs = require('node:fs');
   assert.match(main, /"ok": model_files is not None and backend_ready,/, 'RVC health should fail when the backend cannot be initialized');
   assert.match(main, /max_convert_upload_bytes/, 'RVC convert endpoint should still enforce an upload size cap');
 
+  // Streaming mode wiring
+  assert.match(server, /const RVC_STREAMING = process\.env\.RVC_STREAMING !== '0';/, 'server should read RVC_STREAMING with default on');
+  assert.match(server, /RVC_SEGMENT_SILENCE_MS \|\| 250/, 'server should default RVC_SEGMENT_SILENCE_MS to 250');
+  assert.match(server, /RVC_SEGMENT_SILENCE_RMS \|\| 0\.01/, 'server should default RVC_SEGMENT_SILENCE_RMS to 0.01');
+  assert.match(server, /RVC_SEGMENT_MIN_MS \|\| 400/, 'server should default RVC_SEGMENT_MIN_MS to 400');
+  assert.match(server, /RVC_SEGMENT_MAX_MS \|\| 4000/, 'server should default RVC_SEGMENT_MAX_MS to 4000');
+  assert.match(server, /createAssistantAudioSegmenter/, 'server should use the assistant audio segmenter');
+  assert.match(server, /segmenter\.push\(/, 'server should push assistant audio chunks into the segmenter');
+  assert.match(server, /segmenter\.flush\(\)/, 'server should flush the segmenter on AgentAudioDone');
+  assert.match(server, /segmenter\.reset\(\)/, 'server should reset the segmenter on barge-in/discard');
+  assert.match(server, /const queueAssistantAudioFlush = \([^)]*chunks[^)]*byteLength/, 'queueAssistantAudioFlush should accept explicit chunks and byteLength');
+
+  const segmenterModule = fs.readFileSync('assistant-audio-segmenter.js', 'utf8');
+  assert.match(segmenterModule, /function createAssistantAudioSegmenter\(/, 'segmenter module should export a factory');
+
   console.log('rvc integration checks passed');
 })().catch((error) => {
   console.error(error);

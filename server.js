@@ -4,6 +4,7 @@ const Fastify = require('fastify');
 const fastifyStatic = require('@fastify/static');
 const WebSocket = require('ws');
 const { convertPcmWithRvc, isRvcConfigured, RvcConversionTimeoutError } = require('./rvc-audio');
+const { createAssistantAudioSegmenter } = require('./assistant-audio-segmenter');
 
 const PORT = Number(process.env.PORT || 3000);
 const DEEPGRAM_AGENT_URL = process.env.DEEPGRAM_AGENT_URL || 'wss://agent.deepgram.com/v1/agent/converse';
@@ -14,6 +15,11 @@ const RVC_TIMEOUT_MS = Number(process.env.RVC_TIMEOUT_MS || 120000);
 const RVC_PITCH = Number(process.env.RVC_PITCH || 0);
 const RVC_INDEX_RATE = Number(process.env.RVC_INDEX_RATE || 0.5);
 const RVC_F0_METHOD = process.env.RVC_F0_METHOD || 'rmvpe';
+const RVC_STREAMING = process.env.RVC_STREAMING !== '0';
+const RVC_SEGMENT_SILENCE_MS = Number(process.env.RVC_SEGMENT_SILENCE_MS || 250);
+const RVC_SEGMENT_SILENCE_RMS = Number(process.env.RVC_SEGMENT_SILENCE_RMS || 0.01);
+const RVC_SEGMENT_MIN_MS = Number(process.env.RVC_SEGMENT_MIN_MS || 400);
+const RVC_SEGMENT_MAX_MS = Number(process.env.RVC_SEGMENT_MAX_MS || 4000);
 
 const app = Fastify({ logger: true });
 app.register(fastifyStatic, { root: path.join(__dirname, 'public') });
@@ -73,6 +79,15 @@ wss.on('connection', (client) => {
   let rvcDisabledForSession = false;
   let deepgramClosed = false;
   const rvcEnabled = () => isRvcConfigured(RVC_SERVICE_URL) && !rvcDisabledForSession;
+  const segmenter = createAssistantAudioSegmenter({
+    sampleRate: 24000,
+    bytesPerSample: 2,
+    silenceMs: RVC_SEGMENT_SILENCE_MS,
+    silenceRms: RVC_SEGMENT_SILENCE_RMS,
+    minMs: RVC_SEGMENT_MIN_MS,
+    maxMs: RVC_SEGMENT_MAX_MS,
+  });
+  const streamingEnabled = () => RVC_STREAMING && rvcEnabled();
   const clearAssistantAudioBuffer = () => {
     assistantAudioChunks = [];
     assistantAudioBytes = 0;
@@ -84,6 +99,7 @@ wss.on('connection', (client) => {
     assistantAudioGeneration += 1;
     abortAssistantAudioConversion();
     assistantAudioFlushQueue = [];
+    segmenter.reset();
     clearAssistantAudioBuffer();
   };
   const closeClientAfterAssistantAudio = () => {
@@ -228,27 +244,36 @@ wss.on('connection', (client) => {
       assistantAudioFlushRunning = false;
     }
   };
-  const queueAssistantAudioFlush = (generation) => {
-    if (generation !== assistantAudioGeneration || !assistantAudioChunks.length) return;
+  const queueAssistantAudioFlush = (generation, chunks, byteLength) => {
+    if (generation !== assistantAudioGeneration || !chunks.length || !byteLength) return;
     const flush = {
       generation,
-      chunks: assistantAudioChunks,
-      byteLength: assistantAudioBytes,
+      chunks,
+      byteLength,
       ready: false,
       fallbackToOriginal: false,
       convertedAudio: undefined,
       controller: undefined,
     };
-    clearAssistantAudioBuffer();
     assistantAudioFlushQueue.push(flush);
     void processAssistantAudioFlush(flush);
     void drainAssistantAudioFlushQueue();
   };
 
+  const enqueueAssistantSegment = (generation, segment) => {
+    if (!segment || !segment.byteLength) return;
+    queueAssistantAudioFlush(generation, [segment.pcm], segment.byteLength);
+  };
+
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));
   deepgram.on('message', async (data, isBinary) => {
     if (isBinary) {
-      if (shouldBufferAssistantAudio()) {
+      if (streamingEnabled()) {
+        const generation = assistantAudioGeneration;
+        const chunk = Buffer.from(data);
+        const segments = segmenter.push(chunk);
+        segments.forEach((segment) => enqueueAssistantSegment(generation, segment));
+      } else if (shouldBufferAssistantAudio()) {
         const chunk = Buffer.from(data);
         assistantAudioChunks.push(chunk);
         assistantAudioBytes += chunk.length;
@@ -272,7 +297,12 @@ wss.on('connection', (client) => {
     if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
     if (event.type === 'AgentAudioDone') {
       const generation = assistantAudioGeneration;
-      void queueAssistantAudioFlush(generation);
+      if (streamingEnabled()) {
+        segmenter.flush().forEach((segment) => enqueueAssistantSegment(generation, segment));
+      } else {
+        queueAssistantAudioFlush(generation, assistantAudioChunks, assistantAudioBytes);
+        clearAssistantAudioBuffer();
+      }
     }
   });
   deepgram.on('error', (error) => endConversation(error.message));
