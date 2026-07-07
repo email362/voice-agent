@@ -210,7 +210,7 @@ function createAssistantAudioSegmenter(options = {}) {
         progressed = true;
         continue;
       }
-      if (trailingSilenceBytes >= silenceBytes && buffer.length >= minBytes) {
+      if (trailingSilenceBytes >= silenceBytes && (buffer.length - trailingSilenceBytes) >= minBytes) {
         segments.push(takeSegment(buffer.length));
         progressed = true;
       }
