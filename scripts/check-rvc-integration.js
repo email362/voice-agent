@@ -120,7 +120,8 @@ const fs = require('node:fs');
   assert.match(segmenterModule, /function createAssistantAudioSegmenter\(/, 'segmenter module should export a factory');
 
   assert.match(browser, /const PLAYBACK_LEAD_SECONDS =/, 'browser should define a playback lead constant');
-  assert.match(browser, /PLAYBACK_LEAD_SECONDS/, 'browser should apply the playback lead when scheduling');
+  assert.match(browser, /const playbackIsIdle = nextPlaybackTime <= audioContext\.currentTime;/, 'browser should detect idle playback before applying lead');
+  assert.match(browser, /const earliestStart = playbackIsIdle \? audioContext\.currentTime \+ PLAYBACK_LEAD_SECONDS : audioContext\.currentTime;/, 'browser should apply playback lead only when idle');
 
   assert.match(server, /segmenter\.hasBufferedAudio\(\)/, 'server should account for pending segmenter audio when deciding whether to buffer');
   assert.match(server, /const flushPendingAssistantAudio = \(generation\) => \{[\s\S]*segmenter\.flush\(\)\.forEach\(\(segment\) => enqueueAssistantSegment\(generation, segment\)\);[\s\S]*queueAssistantAudioFlush\(generation, assistantAudioChunks, assistantAudioBytes\);[\s\S]*clearAssistantAudioBuffer\(\);[\s\S]*\};/, 'server should drain segmenter audio before fallback chunks in one helper');

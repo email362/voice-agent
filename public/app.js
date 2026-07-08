@@ -129,7 +129,8 @@ function scheduleAudioBuffer(audioBuffer, generation = playbackGeneration) {
   playbackNodes.add(node);
   node.addEventListener('ended', () => playbackNodes.delete(node), { once: true });
   node.connect(audioContext.destination);
-  const earliestStart = audioContext.currentTime + PLAYBACK_LEAD_SECONDS;
+  const playbackIsIdle = nextPlaybackTime <= audioContext.currentTime;
+  const earliestStart = playbackIsIdle ? audioContext.currentTime + PLAYBACK_LEAD_SECONDS : audioContext.currentTime;
   const startAt = Math.max(earliestStart, nextPlaybackTime);
   node.start(startAt);
   nextPlaybackTime = startAt + audioBuffer.duration;
