@@ -74,4 +74,28 @@ const QUIET = 0; // silence
   assert.equal(out[0].byteLength % 2, 0, 'flushed segment even length');
 }
 
+// 7. Silence inside a single pushed chunk cuts before later speech resets the gap.
+{
+  const seg = createAssistantAudioSegmenter({ silenceMs: 250, minMs: 400, maxMs: 4000, silenceRms: 0.01 });
+  const out = seg.push(Buffer.concat([pcm(500, LOUD), pcm(300, QUIET), pcm(200, LOUD)]));
+  assert.equal(out.length, 1, 'embedded silence gap should cut within a single push');
+  assert.equal(out[0].byteLength, Math.round((800 / 1000) * SAMPLE_RATE) * 2, 'cut should include speech plus silence gap only');
+  const trailing = seg.flush();
+  assert.equal(trailing.length, 1, 'later speech remains buffered after embedded-silence cut');
+  assert.equal(trailing[0].byteLength, Math.round((200 / 1000) * SAMPLE_RATE) * 2, 'later speech is emitted on flush');
+}
+
+// 8. hasBufferedAudio reflects push, flush, and reset state.
+{
+  const seg = createAssistantAudioSegmenter();
+  assert.equal(seg.hasBufferedAudio(), false, 'new segmenter starts empty');
+  seg.push(pcm(50, LOUD));
+  assert.equal(seg.hasBufferedAudio(), true, 'push marks segmenter as buffered');
+  seg.flush();
+  assert.equal(seg.hasBufferedAudio(), false, 'flush clears buffered state');
+  seg.push(pcm(50, LOUD));
+  seg.reset();
+  assert.equal(seg.hasBufferedAudio(), false, 'reset clears buffered state');
+}
+
 console.log('segmenter checks passed');

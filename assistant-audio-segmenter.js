@@ -31,7 +31,7 @@ function createAssistantAudioSegmenter(options = {}) {
   let analyzedBytes = 0;
   let trailingSilenceBytes = 0;
 
-  const analyzedWholeWindows = () => {
+  const analyzeUntilCut = () => {
     while (buffer.length - analyzedBytes >= windowBytes) {
       const start = analyzedBytes;
       const end = start + windowBytes;
@@ -39,17 +39,24 @@ function createAssistantAudioSegmenter(options = {}) {
       if (rms < silenceRms) {
         trailingSilenceBytes += windowBytes;
       } else {
+        if (trailingSilenceBytes >= silenceBytes && analyzedBytes - trailingSilenceBytes >= minBytes) {
+          return analyzedBytes;
+        }
         trailingSilenceBytes = 0;
       }
       analyzedBytes = end;
     }
+    if (trailingSilenceBytes >= silenceBytes && analyzedBytes - trailingSilenceBytes >= minBytes) {
+      return analyzedBytes;
+    }
+    return 0;
   };
 
   const takeSegment = (byteLength) => {
     const even = byteLength - (byteLength % bytesPerSample);
     const pcm = buffer.subarray(0, even);
     buffer = buffer.subarray(even);
-    analyzedBytes = Math.max(0, analyzedBytes - even);
+    analyzedBytes = 0;
     trailingSilenceBytes = 0;
     return { pcm: Buffer.from(pcm), byteLength: even };
   };
@@ -58,22 +65,22 @@ function createAssistantAudioSegmenter(options = {}) {
     if (!chunk || !chunk.length) return [];
     buffer = buffer.length ? Buffer.concat([buffer, chunk]) : Buffer.from(chunk);
     const segments = [];
-    let progressed = true;
-    while (progressed) {
-      progressed = false;
-      analyzedWholeWindows();
-      if (buffer.length >= maxBytes) {
-        segments.push(takeSegment(maxBytes));
-        progressed = true;
+    while (true) {
+      const silenceCut = analyzeUntilCut();
+      if (silenceCut) {
+        segments.push(takeSegment(silenceCut));
         continue;
       }
-      if (trailingSilenceBytes >= silenceBytes && (buffer.length - trailingSilenceBytes) >= minBytes) {
-        segments.push(takeSegment(buffer.length));
-        progressed = true;
+      if (buffer.length >= maxBytes) {
+        segments.push(takeSegment(maxBytes));
+        continue;
       }
+      break;
     }
     return segments;
   };
+
+  const hasBufferedAudio = () => buffer.length > 0;
 
   const flush = () => {
     if (!buffer.length) return [];
@@ -87,7 +94,7 @@ function createAssistantAudioSegmenter(options = {}) {
     trailingSilenceBytes = 0;
   };
 
-  return { push, flush, reset };
+  return { push, flush, reset, hasBufferedAudio };
 }
 
 module.exports = { createAssistantAudioSegmenter };
