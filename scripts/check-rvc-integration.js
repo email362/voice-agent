@@ -122,6 +122,11 @@ const fs = require('node:fs');
   assert.match(browser, /const PLAYBACK_LEAD_SECONDS =/, 'browser should define a playback lead constant');
   assert.match(browser, /PLAYBACK_LEAD_SECONDS/, 'browser should apply the playback lead when scheduling');
 
+  assert.match(server, /segmenter\.hasBufferedAudio\(\)/, 'server should account for pending segmenter audio when deciding whether to buffer');
+  assert.match(server, /const flushPendingAssistantAudio = \(generation\) => \{[\s\S]*segmenter\.flush\(\)\.forEach\(\(segment\) => enqueueAssistantSegment\(generation, segment\)\);[\s\S]*queueAssistantAudioFlush\(generation, assistantAudioChunks, assistantAudioBytes\);[\s\S]*clearAssistantAudioBuffer\(\);[\s\S]*\};/, 'server should drain segmenter audio before fallback chunks in one helper');
+  assert.match(server, /if \(event\.type === 'AgentAudioDone'\) \{[\s\S]*flushPendingAssistantAudio\(generation\);[\s\S]*\}/, 'AgentAudioDone should drain all pending assistant audio');
+  assert.match(server, /deepgram\.on\('close',[\s\S]*flushPendingAssistantAudio\(assistantAudioGeneration\);[\s\S]*closeClientAfterAssistantAudio\(\);[\s\S]*\}\);/, 'Deepgram close should drain pending segmenter audio before closing client');
+
   console.log('rvc integration checks passed');
 })().catch((error) => {
   console.error(error);

@@ -141,7 +141,7 @@ wss.on('connection', (client) => {
     if (deepgram.readyState === WebSocket.OPEN) deepgram.send(data, { binary: isBinary });
   };
   const shouldBufferAssistantAudio = () =>
-    rvcEnabled() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning;
+    rvcEnabled() || segmenter.hasBufferedAudio() || assistantAudioChunks.length > 0 || assistantAudioFlushQueue.length > 0 || assistantAudioFlushRunning;
 
   const sendOriginalAssistantAudio = (chunks) => {
     chunks.forEach((chunk) => sendToClient(chunk, true));
@@ -265,6 +265,12 @@ wss.on('connection', (client) => {
     queueAssistantAudioFlush(generation, [segment.pcm], segment.byteLength);
   };
 
+  const flushPendingAssistantAudio = (generation) => {
+    segmenter.flush().forEach((segment) => enqueueAssistantSegment(generation, segment));
+    queueAssistantAudioFlush(generation, assistantAudioChunks, assistantAudioBytes);
+    clearAssistantAudioBuffer();
+  };
+
   deepgram.on('open', () => sendToClient(JSON.stringify({ type: 'ProxyConnected' })));
   deepgram.on('message', async (data, isBinary) => {
     if (isBinary) {
@@ -297,15 +303,14 @@ wss.on('connection', (client) => {
     if (event.type === 'UserStartedSpeaking') discardAssistantAudioBuffer();
     if (event.type === 'AgentAudioDone') {
       const generation = assistantAudioGeneration;
-      segmenter.flush().forEach((segment) => enqueueAssistantSegment(generation, segment));
-      queueAssistantAudioFlush(generation, assistantAudioChunks, assistantAudioBytes);
-      clearAssistantAudioBuffer();
+      flushPendingAssistantAudio(generation);
     }
   });
   deepgram.on('error', (error) => endConversation(error.message));
   deepgram.on('close', (code, reason) => {
     deepgramClosed = true;
     sendToClient(JSON.stringify({ type: 'ProxyClosed', code, reason: reason.toString() }));
+    flushPendingAssistantAudio(assistantAudioGeneration);
     closeClientAfterAssistantAudio();
   });
 
