@@ -14,16 +14,24 @@ function drill(name) {
   assert.ok(match, `missing ${name} failure drill`);
   return match[1];
 }
-assert.match(deploymentReadme, /tailscale serve --bg http:\/\/127\.0\.0\.1:8787/);
+assert.match(deploymentReadme, /WEB_PORT="\$\{WEB_PORT:-8787\}"/);
+assert.match(deploymentReadme, /WEB_PORT=18787/);
+assert.match(deploymentReadme, /deploy\/install-user-services\.sh --render-dir "\$render_dir" --port "\$WEB_PORT"/);
+assert.match(deploymentReadme, /deploy\/install-user-services\.sh --port "\$WEB_PORT"/);
+assert.match(deploymentReadme, /curl "http:\/\/127\.0\.0\.1:\$WEB_PORT\/health"/);
+assert.match(deploymentReadme, /tailscale serve --bg "http:\/\/127\.0\.0\.1:\$WEB_PORT"/);
 assert.match(deploymentReadme, /loginctl enable-linger/);
 assert.match(deploymentReadme, /systemctl --user enable --now voice-agent-rvc\.service voice-agent-web\.service/);
 assert.match(deploymentReadme, /journalctl --user -u voice-agent-web\.service/);
-assert.match(deploymentReadme, /curl http:\/\/127\.0\.0\.1:8787\/health/);
-assert.match(deploymentReadme, /```bash\n\(\n  render_dir="\$\(mktemp -d\)"\n  trap 'rm -rf -- "\$render_dir"' EXIT\n  deploy\/install-user-services\.sh --render-dir "\$render_dir"\n  less "\$render_dir\/voice-agent-rvc\.service"\n  less "\$render_dir\/voice-agent-web\.service"\n\)\n```/);
+assert.match(deploymentReadme, /```bash\n\(\n  render_dir="\$\(mktemp -d\)"\n  trap 'rm -rf -- "\$render_dir"' EXIT\n  deploy\/install-user-services\.sh --render-dir "\$render_dir" --port "\$WEB_PORT"\n  less "\$render_dir\/voice-agent-rvc\.service"\n  less "\$render_dir\/voice-agent-web\.service"\n\)\n```/);
 assert.equal((deploymentReadme.match(/\brender_dir=/g) || []).length, 1, 'render_dir must be assigned exactly once');
 assert.doesNotMatch(deploymentReadme, /rm -rf \/tmp\/voice-agent-units/);
 assert.match(drill('Node restart'), /iPhone Safari[\s\S]*without (?:a )?tap/i);
-assert.match(drill('RVC restart'), /original audio[\s\S]*converted audio/i);
+assert.match(drill('RVC restart'), /original audio/i);
+assert.match(drill('RVC restart'), /current WebSocket session/i);
+assert.match(drill('RVC restart'), /Stop[\s\S]*Start|Start[\s\S]*Stop/i);
+assert.match(drill('RVC restart'), /new browser conversation/i);
+assert.doesNotMatch(drill('RVC restart'), /new spoken turn plays converted audio without restarting/i);
 assert.match(drill('Wi-Fi interruption'), /turn Wi-Fi off[\s\S]*reconnects immediately/i);
 assert.match(drill('Safari background and foreground'), /wake lock[\s\S]*Tap to Resume/i);
 assert.match(drill('Reboot before login'), /before (?:an )?interactive login/i);

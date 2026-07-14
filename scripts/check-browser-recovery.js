@@ -10,7 +10,7 @@ assert.match(app, /import \{ createConnectionLifecycle \} from '\/connection-lif
 assert.match(app, /const lifecycle = createConnectionLifecycle\(/);
 assert.match(app, /lifecycle\.isActiveGeneration\(generation\)/);
 assert.match(app, /lifecycle\.scheduleRetry\(generation\)/);
-assert.match(app, /window\.addEventListener\('online', \(\) => lifecycle\.retryNow\(\)\)/);
+assert.match(app, /window\.addEventListener\('online'/);
 assert.match(app, /event\.retryable === false/);
 assert.match(app, /lifecycle\.terminalFailure\(generation\)/);
 assert.match(app, /socketKeepAlive = setInterval/);
@@ -48,6 +48,7 @@ function createBrowserHarness() {
   const scheduledRetries = [];
   const intervals = new Set();
   const documentListeners = new Map();
+  const windowListeners = new Map();
   const media = { calls: 0, defer: false, error: undefined, pending: [], tracks: [] };
   const createMediaStream = () => {
     const track = { readyState: 'live', stop() { this.readyState = 'ended'; } };
@@ -68,6 +69,7 @@ function createBrowserHarness() {
     request.reject(error);
   };
   const wakeLocks = [];
+  const wakeLockRequests = { error: undefined };
   class FakeWebSocket {
     static CONNECTING = 0;
     static OPEN = 1;
@@ -147,6 +149,7 @@ function createBrowserHarness() {
       wakeLock: {
         async request(type) {
           assert.equal(type, 'screen');
+          if (wakeLockRequests.error) throw wakeLockRequests.error;
           const listeners = new Map();
           const lock = {
             released: false,
@@ -163,7 +166,7 @@ function createBrowserHarness() {
     },
     setInterval(callback) { const handle = { callback }; intervals.add(handle); return handle; },
     setTimeout(callback, delay) { const handle = { callback, delay }; scheduledRetries.push(handle); return handle; },
-    window: { addEventListener() {} },
+    window: { addEventListener(type, listener) { windowListeners.set(type, listener); } },
   };
   vm.runInNewContext(`${lifecycleSource}\n${executableApp}`, context);
   return {
@@ -175,6 +178,9 @@ function createBrowserHarness() {
     media,
     scheduledRetries,
     wakeLocks,
+    wakeLockRequests,
+    windowListeners,
+    lifecycleSnapshot: () => vm.runInNewContext('lifecycle.snapshot()', context),
   };
 }
 
@@ -202,6 +208,47 @@ async function checkGenerationScopedErrorRecovery() {
   assert.equal(scheduledRetries.length, 0, 'stale socket close/error events should not schedule recovery');
   activeSocket.deliver('error');
   assert.equal(scheduledRetries.length, 1, 'the active generation should still schedule recovery');
+}
+
+async function checkWakeLockDenialDoesNotStopStartup() {
+  const { element, FakeWebSocket, lifecycleSnapshot, wakeLockRequests } = createBrowserHarness();
+  wakeLockRequests.error = new Error('Wake Lock permission denied');
+
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+
+  assert.equal(FakeWebSocket.instances.length, 1, 'wake-lock denial should still create the first WebSocket');
+  assert.equal(lifecycleSnapshot().desiredRunning, true, 'wake-lock denial should preserve desired-running state');
+  assert.match(element('#events').textContent, /"type": "WakeLockWarning"/);
+  assert.match(element('#events').textContent, /Wake Lock permission denied/);
+}
+
+async function checkLiveRecoverySignalsDoNotReplaceSocket() {
+  const { documentListeners, element, FakeWebSocket, windowListeners } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  const activeSocket = FakeWebSocket.instances[0];
+  activeSocket.readyState = FakeWebSocket.OPEN;
+  activeSocket.deliver('message', { data: JSON.stringify({ type: 'SettingsApplied' }) });
+
+  windowListeners.get('online')();
+  documentListeners.get('visibilitychange')();
+  await settleAsyncWork();
+
+  assert.equal(FakeWebSocket.instances.length, 1, 'online/visible signals while live must not replace the healthy socket');
+}
+
+async function checkOnlineAcceleratesRetryWait() {
+  const { element, FakeWebSocket, scheduledRetries, windowListeners } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  FakeWebSocket.instances[0].deliver('error');
+  assert.equal(scheduledRetries.length, 1, 'socket failure should enter retry-wait');
+
+  windowListeners.get('online')();
+  await settleAsyncWork();
+
+  assert.equal(FakeWebSocket.instances.length, 2, 'online should accelerate a pending retry');
 }
 
 async function checkActiveCloseRecovery() {
@@ -357,7 +404,7 @@ async function checkDeferredResumeCannotSurviveStop() {
   assert.equal(element('#status').textContent, 'Stopped.', 'deferred Resume should preserve stopped status');
 }
 
-async function checkConcurrentRecoveryKeepsOnlyNewestMedia() {
+async function checkVisibilityDoesNotSupersedeConnectingRecovery() {
   const { documentListeners, element, FakeWebSocket, media, scheduledRetries } = createBrowserHarness();
   await element('#startBtn').dispatch('click');
   await settleAsyncWork();
@@ -367,19 +414,19 @@ async function checkConcurrentRecoveryKeepsOnlyNewestMedia() {
   scheduledRetries.shift().callback();
   documentListeners.get('visibilitychange')();
   await settleAsyncWork();
-  assert.equal(media.pending.length, 2, 'overlapping retry and visibility recovery should both be controlled');
+  assert.equal(media.pending.length, 1, 'visibility while connecting should not supersede active media recovery');
 
-  const currentStream = media.resolveAt(1);
+  const currentStream = media.resolveNext();
   await settleAsyncWork();
-  const staleStream = media.resolveNext();
-  await settleAsyncWork();
-  assert.equal(staleStream.getAudioTracks()[0].readyState, 'ended', 'superseded media should be stopped');
-  assert.equal(currentStream.getAudioTracks()[0].readyState, 'live', 'the newest media should remain active');
-  assert.equal(FakeWebSocket.instances.length, 2, 'concurrent recovery should create only one replacement socket');
-  assert.equal(element('#resumeBtn').hidden, true, 'superseded recovery should not expose Resume');
+  assert.equal(currentStream.getAudioTracks()[0].readyState, 'live', 'active recovery media should remain live');
+  assert.equal(FakeWebSocket.instances.length, 2, 'active recovery should create one replacement socket');
+  assert.equal(element('#resumeBtn').hidden, true, 'visibility during recovery should not expose Resume');
 }
 
 Promise.all([
+  checkWakeLockDenialDoesNotStopStartup(),
+  checkLiveRecoverySignalsDoNotReplaceSocket(),
+  checkOnlineAcceleratesRetryWait(),
   checkGenerationScopedErrorRecovery(),
   checkActiveCloseRecovery(),
   checkRetryReusesLiveMedia(),
@@ -389,7 +436,7 @@ Promise.all([
   checkDeferredMediaCannotSurviveStop(),
   checkDeferredMediaFailureCannotSurviveStop(),
   checkDeferredResumeCannotSurviveStop(),
-  checkConcurrentRecoveryKeepsOnlyNewestMedia(),
+  checkVisibilityDoesNotSupersedeConnectingRecovery(),
 ])
   .then(() => console.log('browser recovery integration checks passed'))
   .catch((error) => {

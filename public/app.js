@@ -199,7 +199,7 @@ async function ensureMedia({ userGesture = false } = {}) {
       await requestWakeLock();
     } catch (error) {
       requireCurrentMediaOperation(operation);
-      throw error;
+      logEvent({ type: 'WakeLockWarning', description: error.message });
     }
     requireCurrentMediaOperation(operation);
   }
@@ -498,17 +498,21 @@ resumeBtn.addEventListener('click', async () => {
     showResumeAction(error.message);
   }
 });
-window.addEventListener('online', () => lifecycle.retryNow());
+window.addEventListener('online', () => {
+  if (lifecycle.snapshot().state === 'retry-wait') lifecycle.retryNow();
+});
 document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible' || !lifecycle.snapshot().desiredRunning) return;
+  const visibilitySnapshot = lifecycle.snapshot();
+  if (document.visibilityState !== 'visible' || !visibilitySnapshot.desiredRunning) return;
   requestWakeLock().catch((error) => logEvent({ type: 'WakeLockWarning', description: error.message }));
+  if (visibilitySnapshot.state === 'connecting') return;
   const recoveryGeneration = lifecycle.snapshot().generation;
   const operation = mediaOperation + 1;
   try {
     await ensureMedia();
     const snapshot = lifecycle.snapshot();
     if (!isCurrentMediaOperation(operation) || !snapshot.desiredRunning || snapshot.generation !== recoveryGeneration) return;
-    lifecycle.retryNow();
+    if (snapshot.state === 'retry-wait') lifecycle.retryNow();
   } catch (error) {
     if (isStaleMediaOperation(error) || !desiredRunning || !lifecycle.snapshot().desiredRunning) return;
     showResumeAction(error.message);

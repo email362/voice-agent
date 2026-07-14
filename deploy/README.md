@@ -4,6 +4,18 @@ This guide runs the RVC and web services as systemd user units, binds both servi
 
 Run commands from the repository root unless a step says otherwise.
 
+Choose the production web port once in the shell that will run the commands below. If `WEB_PORT` is unset, this keeps the exact production default of `8787`:
+
+```bash
+export WEB_PORT="${WEB_PORT:-8787}"
+```
+
+On this host, port `8787` may collide with an existing listener. To use the known alternative consistently for rendering, installation, health checks, and Tailscale Serve, set:
+
+```bash
+export WEB_PORT=18787
+```
+
 ## 1. Prerequisites
 
 Install the Node dependencies and create `.env`:
@@ -34,7 +46,7 @@ Render the units into a temporary directory without installing them or calling s
 (
   render_dir="$(mktemp -d)"
   trap 'rm -rf -- "$render_dir"' EXIT
-  deploy/install-user-services.sh --render-dir "$render_dir"
+  deploy/install-user-services.sh --render-dir "$render_dir" --port "$WEB_PORT"
   less "$render_dir/voice-agent-rvc.service"
   less "$render_dir/voice-agent-web.service"
 )
@@ -42,14 +54,14 @@ Render the units into a temporary directory without installing them or calling s
 
 The subshell confines both `render_dir` and its EXIT trap, so it does not replace an EXIT trap in the operator's interactive shell.
 
-Verify that both services bind to `127.0.0.1`, the web service uses port `8787`, and the RVC service sets `RVC_DEVICE=cpu`.
+Verify that both services bind to `127.0.0.1`, the web service uses port `$WEB_PORT` (`8787` by default), and the RVC service sets `RVC_DEVICE=cpu`.
 
 ## 3. Install the user units
 
-Port `8787` must be free. Install the rendered units into the current user's systemd configuration and reload the user daemon:
+The selected `$WEB_PORT` must be free. Install the rendered units into the current user's systemd configuration and reload the user daemon:
 
 ```bash
-deploy/install-user-services.sh --port 8787
+deploy/install-user-services.sh --port "$WEB_PORT"
 ```
 
 The installer does not enable or start either service.
@@ -77,7 +89,7 @@ Check the RVC service first, then the web proxy:
 
 ```bash
 curl http://127.0.0.1:5055/health
-curl http://127.0.0.1:8787/health
+curl "http://127.0.0.1:$WEB_PORT/health"
 ```
 
 Do not continue if either command fails. In the RVC response, confirm that `configured_device` and `effective_device` are `cpu`, the intended model paths are present, and backend readiness is healthy.
@@ -87,7 +99,7 @@ Do not continue if either command fails. In the RVC response, confirm that `conf
 Create a persistent private reverse proxy to the loopback-only web service:
 
 ```bash
-sudo tailscale serve --bg http://127.0.0.1:8787
+sudo tailscale serve --bg "http://127.0.0.1:$WEB_PORT"
 tailscale serve status
 ```
 
@@ -132,7 +144,7 @@ systemctl --user start voice-agent-rvc.service
 systemctl --user status voice-agent-rvc.service
 ```
 
-Success means the stopped interval still plays the original audio instead of losing the response. After RVC health returns, a new spoken turn plays converted audio without restarting the Node service or reloading Safari.
+Success means the stopped interval still plays the original audio instead of losing the response. An RVC failure disables conversion for the current WebSocket session. After RVC health returns, press **Stop**, then **Start** (tap if prompted) to create a new browser conversation; verify that a spoken turn in that new conversation plays converted audio. The Node service does not need to be restarted and Safari does not need to be reloaded.
 
 ### Wi-Fi interruption
 
