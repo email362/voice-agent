@@ -9,12 +9,21 @@ async function buildServiceHealth({
   const rvc = { configured, serviceUrl: rvcServiceUrl || '', reachable: false, ready: false, error: null };
   if (configured) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let timeout;
+    const timedOut = new Promise((_, reject) => {
+      timeout = setTimeout(() => {
+        controller.abort();
+        reject(Object.assign(new Error(`RVC health timed out after ${timeoutMs}ms`), { name: 'AbortError' }));
+      }, timeoutMs);
+    });
     try {
-      const response = await fetchImpl(`${rvcServiceUrl.replace(/\/$/, '')}/health`, { signal: controller.signal });
+      const response = await Promise.race([
+        Promise.resolve().then(() => fetchImpl(`${rvcServiceUrl.replace(/\/$/, '')}/health`, { signal: controller.signal })),
+        timedOut,
+      ]);
       rvc.reachable = response.ok;
       if (!response.ok) throw new Error(`RVC health returned HTTP ${response.status}`);
-      const body = await response.json();
+      const body = await Promise.race([Promise.resolve().then(() => response.json()), timedOut]);
       rvc.ready = body.ok === true;
       if (!rvc.ready) rvc.error = body.backend?.error || body.model?.error || 'RVC reported unhealthy';
     } catch (error) {

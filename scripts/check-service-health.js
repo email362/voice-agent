@@ -1,6 +1,20 @@
 const assert = require('node:assert/strict');
 const { buildServiceHealth } = require('../service-health');
 
+async function settleWithin(promise, timeoutMs) {
+  let guard;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        guard = setTimeout(() => reject(new Error(`health check did not settle within ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(guard);
+  }
+}
+
 (async () => {
   const disabled = await buildServiceHealth({ hasDeepgramKey: true, rvcServiceUrl: '', fetchImpl: () => assert.fail('must not fetch') });
   assert.equal(disabled.ready, true);
@@ -45,6 +59,32 @@ const { buildServiceHealth } = require('../service-health');
   });
   assert.equal(timedOut.degraded, true);
   assert.match(timedOut.rvc.error, /timed out after 5ms/);
+
+  const ignoresAbort = await settleWithin(buildServiceHealth({
+    hasDeepgramKey: true,
+    rvcServiceUrl: 'http://127.0.0.1:5055',
+    timeoutMs: 5,
+    fetchImpl: () => new Promise(() => {}),
+  }), 250);
+  assert.equal(ignoresAbort.degraded, true);
+  assert.match(ignoresAbort.rvc.error, /timed out after 5ms/);
+
+  const unhandledRejections = [];
+  const captureUnhandledRejection = (reason) => unhandledRejections.push(reason);
+  process.on('unhandledRejection', captureUnhandledRejection);
+  try {
+    const rejectsAfterTimeout = await buildServiceHealth({
+      hasDeepgramKey: true,
+      rvcServiceUrl: 'http://127.0.0.1:5055',
+      timeoutMs: 5,
+      fetchImpl: () => new Promise((_, reject) => setTimeout(() => reject(new Error('late fetch rejection')), 25)),
+    });
+    assert.match(rejectsAfterTimeout.rvc.error, /timed out after 5ms/);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(unhandledRejections, []);
+  } finally {
+    process.off('unhandledRejection', captureUnhandledRejection);
+  }
 
   console.log('service health checks passed');
 })().catch((error) => {
