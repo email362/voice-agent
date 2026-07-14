@@ -17,7 +17,7 @@ assert.match(app, /clearInterval\(socketKeepAlive\)/);
 assert.match(server, /retryable: false/);
 assert.match(server, /retryable: true/);
 
-async function checkGenerationScopedRecovery() {
+function createBrowserHarness() {
   const elements = new Map();
   const element = (selector) => {
     if (!elements.has(selector)) {
@@ -96,7 +96,11 @@ async function checkGenerationScopedRecovery() {
     window: { addEventListener() {} },
   };
   vm.runInNewContext(`${lifecycleSource}\n${executableApp}`, context);
+  return { element, FakeWebSocket, scheduledRetries };
+}
 
+async function checkGenerationScopedErrorRecovery() {
+  const { element, FakeWebSocket, scheduledRetries } = createBrowserHarness();
   await element('#startBtn').dispatch('click');
   const staleSocket = FakeWebSocket.instances[0];
   assert.equal(staleSocket.generation, 1);
@@ -115,7 +119,20 @@ async function checkGenerationScopedRecovery() {
   assert.equal(scheduledRetries.length, 1, 'the active generation should still schedule recovery');
 }
 
-checkGenerationScopedRecovery()
+async function checkActiveCloseRecovery() {
+  const { element, FakeWebSocket, scheduledRetries } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  const activeSocket = FakeWebSocket.instances[0];
+  assert.equal(activeSocket.generation, 1);
+  activeSocket.readyState = FakeWebSocket.OPEN;
+  activeSocket.deliver('message', { data: JSON.stringify({ type: 'SettingsApplied' }) });
+  activeSocket.deliver('close');
+  assert.equal(scheduledRetries.length, 1, 'an active socket close should schedule exactly one recovery');
+  activeSocket.deliver('close');
+  assert.equal(scheduledRetries.length, 1, 'repeated close delivery should not schedule duplicate recovery');
+}
+
+Promise.all([checkGenerationScopedErrorRecovery(), checkActiveCloseRecovery()])
   .then(() => console.log('browser recovery integration checks passed'))
   .catch((error) => {
     console.error(error);
