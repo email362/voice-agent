@@ -31,7 +31,10 @@ assert.match(app, /if \(startupGeneration !== browserStartupGeneration\) \{[\s\S
 assert.match(app, /function stopConversation\(\) \{[\s\S]*lifecycle\.stop\(\);[\s\S]*releaseBrowserResources\(\);[\s\S]*\}/, 'app.js should stop the lifecycle and release browser resources from the UI');
 assert.match(app, /stopBtn\.addEventListener\('click', \(\) => stopConversation\(\)\);/, 'app.js should stop the conversation from the UI button');
 assert.match(server, /const DEBUG_AUDIO = process\.env\.DEBUG_AUDIO === '1';/, 'server.js should expose opt-in audio diagnostics');
-assert.match(server, /ok: Boolean\(DEEPGRAM_API_KEY\)/, 'server.js health should reflect proxy readiness');
+assert.match(server, /buildServiceHealth\(\{[\s\S]*hasDeepgramKey: Boolean\(DEEPGRAM_API_KEY\)/, 'server.js health should reflect proxy readiness');
+assert.match(server, /timeoutMs: RVC_HEALTH_TIMEOUT_MS/, 'server.js health should bound the RVC dependency probe');
+assert.match(server, /const HOST = process\.env\.HOST \|\| '0\.0\.0\.0';/, 'server.js should support an explicit listen host');
+assert.match(server, /app\.listen\(\{ port: PORT, host: HOST \}\)\.catch/, 'server.js should listen on the configured host and handle startup failures');
 assert.match(server, /clientAudioFrames \+= 1;/, 'server.js should count client audio frames');
 assert.match(server, /function measurePcm16Level\(buffer\)/, 'server.js should measure incoming PCM levels for input diagnostics');
 assert.match(server, /clientAudioPeak = Math\.max\(clientAudioPeak, level\.peak\);/, 'server.js should track peak mic level while forwarding audio');

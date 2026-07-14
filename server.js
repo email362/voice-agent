@@ -5,12 +5,15 @@ const fastifyStatic = require('@fastify/static');
 const WebSocket = require('ws');
 const { convertPcmWithRvc, isRvcConfigured, RvcConversionTimeoutError } = require('./rvc-audio');
 const { createAssistantAudioSegmenter } = require('./assistant-audio-segmenter');
+const { buildServiceHealth } = require('./service-health');
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = process.env.HOST || '0.0.0.0';
 const DEEPGRAM_AGENT_URL = process.env.DEEPGRAM_AGENT_URL || 'wss://agent.deepgram.com/v1/agent/converse';
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
 const DEBUG_AUDIO = process.env.DEBUG_AUDIO === '1';
 const RVC_SERVICE_URL = process.env.RVC_SERVICE_URL ?? 'http://127.0.0.1:5055';
+const RVC_HEALTH_TIMEOUT_MS = Number(process.env.RVC_HEALTH_TIMEOUT_MS || 1500);
 const RVC_TIMEOUT_MS = Number(process.env.RVC_TIMEOUT_MS || 120000);
 const RVC_PITCH = Number(process.env.RVC_PITCH || 0);
 const RVC_INDEX_RATE = Number(process.env.RVC_INDEX_RATE || 0.5);
@@ -38,13 +41,10 @@ function measurePcm16Level(buffer) {
   return { peak, rms: Math.sqrt(sumSquares / samples) };
 }
 
-app.get('/health', async () => ({
-  ok: Boolean(DEEPGRAM_API_KEY),
+app.get('/health', async () => buildServiceHealth({
   hasDeepgramKey: Boolean(DEEPGRAM_API_KEY),
-  rvc: {
-    configured: isRvcConfigured(RVC_SERVICE_URL),
-    serviceUrl: RVC_SERVICE_URL,
-  },
+  rvcServiceUrl: RVC_SERVICE_URL,
+  timeoutMs: RVC_HEALTH_TIMEOUT_MS,
 }));
 
 const server = app.server;
@@ -346,4 +346,7 @@ wss.on('connection', (client) => {
   client.on('error', () => deepgram.close());
 });
 
-app.listen({ port: PORT, host: '0.0.0.0' });
+app.listen({ port: PORT, host: HOST }).catch((error) => {
+  app.log.error(error);
+  process.exitCode = 1;
+});
