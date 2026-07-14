@@ -4,6 +4,7 @@ const SAMPLE_RATE = 24000;
 const PLAYBACK_LEAD_SECONDS = 0.08;
 const startBtn = document.querySelector('#startBtn');
 const stopBtn = document.querySelector('#stopBtn');
+const resumeBtn = document.querySelector('#resumeBtn');
 const statusEl = document.querySelector('#status');
 const eventsEl = document.querySelector('#events');
 const transcriptEl = document.querySelector('#transcript');
@@ -25,9 +26,14 @@ let lastAudioStatusAt = 0;
 let playbackGeneration = 0;
 let browserStartupGeneration = 0;
 let socketCleanup;
+let wakeLock;
 
 
 function setStatus(message) { statusEl.textContent = message; }
+function showResumeAction(message) {
+  setStatus(message);
+  resumeBtn.hidden = false;
+}
 function setMicState(state, label) {
   micIndicator.dataset.state = state;
   micLabel.textContent = label;
@@ -80,9 +86,7 @@ function downsample(input, fromRate, toRate) {
   return output;
 }
 
-async function startMic() {
-  micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-  audioContext = new AudioContext();
+function connectMicGraph() {
   nextPlaybackTime = audioContext.currentTime;
   source = audioContext.createMediaStreamSource(micStream);
   processor = audioContext.createScriptProcessor(4096, 1, 1);
@@ -101,6 +105,44 @@ async function startMic() {
   };
   source.connect(processor);
   processor.connect(audioContext.destination);
+}
+
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator)) {
+    logEvent({ type: 'WakeLockUnavailable', description: 'Keep the iPhone screen awake in device settings.' });
+    return;
+  }
+  if (document.visibilityState !== 'visible') return;
+  if (wakeLock && !wakeLock.released) return;
+  wakeLock = await navigator.wakeLock.request('screen');
+  wakeLock.addEventListener('release', () => {
+    wakeLock = undefined;
+  }, { once: true });
+}
+
+async function releaseWakeLock() {
+  const activeWakeLock = wakeLock;
+  wakeLock = undefined;
+  await activeWakeLock?.release();
+}
+
+async function ensureMedia({ userGesture = false } = {}) {
+  const track = micStream?.getAudioTracks()[0];
+  const hasLiveTrack = Boolean(track && track.readyState === 'live');
+  if (!hasLiveTrack) {
+    processor?.disconnect();
+    source?.disconnect();
+    processor = undefined;
+    source = undefined;
+    micStream?.getTracks().forEach((item) => item.stop());
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+  }
+  if (!audioContext || audioContext.state === 'closed') audioContext = new AudioContext();
+  if (audioContext.state === 'suspended') await audioContext.resume();
+  if (!source || !processor) connectMicGraph();
+  if (userGesture) await requestWakeLock();
 }
 
 function stopPlayback() {
@@ -209,16 +251,22 @@ function failTerminally(generation, description) {
   if (!lifecycle.isActiveGeneration(generation)) return;
   setStatus(description || 'An error occurred.');
   lifecycle.terminalFailure(generation);
+  releaseWakeLock().catch((error) => logEvent({ type: 'WakeLockWarning', description: error.message }));
   releaseBrowserResources({ preserveStatus: true });
 }
 
 function handleConnectionFailure(generation, error) {
   if (!lifecycle.isActiveGeneration(generation)) return;
   logEvent({ type: 'BrowserError', description: error.message });
-  recoverConnection(generation, socket);
+  canStreamMic = false;
+  setMicState('idle', 'Mic needs attention');
+  closeActiveSocket();
+  showResumeAction(error.message);
 }
 
 async function connectConversation(generation) {
+  if (!lifecycle.isActiveGeneration(generation)) return;
+  await ensureMedia();
   if (!lifecycle.isActiveGeneration(generation)) return;
   closeActiveSocket();
   canStreamMic = false;
@@ -328,8 +376,9 @@ async function startConversation() {
   outboundAudioFrames = 0;
   outboundAudioBytes = 0;
   lastAudioStatusAt = 0;
+  resumeBtn.hidden = true;
   setMicState('connecting', 'Mic warming up');
-  await startMic();
+  await ensureMedia({ userGesture: true });
   if (startupGeneration !== browserStartupGeneration) {
     releaseBrowserResources({ preserveStatus: true });
     return;
@@ -337,18 +386,43 @@ async function startConversation() {
   lifecycle.start();
 }
 
-function stopConversation() {
+async function stopConversation() {
   browserStartupGeneration += 1;
   lifecycle.stop();
+  resumeBtn.hidden = true;
+  try {
+    await releaseWakeLock();
+  } catch (error) {
+    logEvent({ type: 'WakeLockWarning', description: error.message });
+  }
   releaseBrowserResources();
 }
 
-startBtn.addEventListener('click', () => startConversation().catch((error) => {
+startBtn.addEventListener('click', () => startConversation().catch(async (error) => {
   logEvent({ type: 'BrowserError', description: error.message });
   setStatus(error.message);
   browserStartupGeneration += 1;
   lifecycle.stop();
+  try {
+    await releaseWakeLock();
+  } catch (wakeLockError) {
+    logEvent({ type: 'WakeLockWarning', description: wakeLockError.message });
+  }
   releaseBrowserResources({ preserveStatus: true });
 }));
 stopBtn.addEventListener('click', () => stopConversation());
+resumeBtn.addEventListener('click', async () => {
+  try {
+    await ensureMedia({ userGesture: true });
+    resumeBtn.hidden = true;
+    lifecycle.retryNow();
+  } catch (error) {
+    showResumeAction(error.message);
+  }
+});
 window.addEventListener('online', () => lifecycle.retryNow());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !lifecycle.snapshot().desiredRunning) return;
+  requestWakeLock().catch((error) => logEvent({ type: 'WakeLockWarning', description: error.message }));
+  ensureMedia().then(() => lifecycle.retryNow()).catch((error) => showResumeAction(error.message));
+});
