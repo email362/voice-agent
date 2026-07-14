@@ -1,0 +1,16 @@
+[Unit]
+Description=Voice Agent web and WebSocket proxy
+After=network-online.target voice-agent-rvc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_ROOT__
+EnvironmentFile=-__PROJECT_ROOT__/.env
+ExecStart=/usr/bin/env HOST=127.0.0.1 PORT=__WEB_PORT__ __NODE_PATH__ __PROJECT_ROOT__/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=default.target

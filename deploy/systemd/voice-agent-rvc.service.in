@@ -1,0 +1,16 @@
+[Unit]
+Description=Voice Agent CPU-only RVC service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__PROJECT_ROOT__/rvc-service
+EnvironmentFile=-__PROJECT_ROOT__/.env
+ExecStart=/usr/bin/env RVC_HOST=127.0.0.1 RVC_PORT=5055 RVC_DEVICE=cpu __PROJECT_ROOT__/rvc-service/.venv/bin/python __PROJECT_ROOT__/rvc-service/run.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
