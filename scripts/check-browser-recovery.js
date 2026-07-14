@@ -48,7 +48,25 @@ function createBrowserHarness() {
   const scheduledRetries = [];
   const intervals = new Set();
   const documentListeners = new Map();
-  const media = { calls: 0, error: undefined, tracks: [] };
+  const media = { calls: 0, defer: false, error: undefined, pending: [], tracks: [] };
+  const createMediaStream = () => {
+    const track = { readyState: 'live', stop() { this.readyState = 'ended'; } };
+    media.tracks.push(track);
+    return { getAudioTracks: () => [track], getTracks: () => [track] };
+  };
+  media.resolveAt = (index = 0) => {
+    const [request] = media.pending.splice(index, 1);
+    assert.ok(request, 'expected a deferred media request');
+    const stream = createMediaStream();
+    request.resolve(stream);
+    return stream;
+  };
+  media.resolveNext = () => media.resolveAt(0);
+  media.rejectNext = (error) => {
+    const request = media.pending.shift();
+    assert.ok(request, 'expected a deferred media request');
+    request.reject(error);
+  };
   const wakeLocks = [];
   class FakeWebSocket {
     static CONNECTING = 0;
@@ -77,11 +95,21 @@ function createBrowserHarness() {
       this.destination = {};
       this.state = 'running';
       this.resumeCalls = 0;
+      this.sources = [];
+      this.processors = [];
       FakeAudioContext.instances.push(this);
     }
 
-    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
-    createScriptProcessor() { return { connect() {}, disconnect() {} }; }
+    createMediaStreamSource(stream) {
+      const source = { context: this, disconnected: false, stream, connect() {}, disconnect() { this.disconnected = true; } };
+      this.sources.push(source);
+      return source;
+    }
+    createScriptProcessor() {
+      const processor = { context: this, disconnected: false, connect() {}, disconnect() { this.disconnected = true; } };
+      this.processors.push(processor);
+      return processor;
+    }
     async resume() { this.resumeCalls += 1; this.state = 'running'; }
     async close() { this.state = 'closed'; }
   }
@@ -112,9 +140,8 @@ function createBrowserHarness() {
         async getUserMedia() {
           media.calls += 1;
           if (media.error) throw media.error;
-          const track = { readyState: 'live', stop() { this.readyState = 'ended'; } };
-          media.tracks.push(track);
-          return { getAudioTracks: () => [track], getTracks: () => [track] };
+          if (media.defer) return new Promise((resolve, reject) => media.pending.push({ resolve, reject }));
+          return createMediaStream();
         },
       },
       wakeLock: {
@@ -210,6 +237,25 @@ async function checkRetryReusesLiveMedia() {
   assert.equal(FakeAudioContext.instances[0].resumeCalls, 1, 'socket recovery should resume a suspended audio context');
 }
 
+async function checkClosedContextRebuildsGraph() {
+  const { element, FakeAudioContext, FakeWebSocket, scheduledRetries } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  const originalContext = FakeAudioContext.instances[0];
+  const originalSource = originalContext.sources[0];
+  await originalContext.close();
+
+  FakeWebSocket.instances[0].deliver('error');
+  scheduledRetries.shift().callback();
+  await settleAsyncWork();
+
+  assert.equal(FakeAudioContext.instances.length, 2, 'closed context recovery should create a new audio context');
+  assert.equal(originalSource.disconnected, true, 'closed context recovery should disconnect the old graph');
+  assert.equal(FakeAudioContext.instances[1].sources.length, 1, 'closed context recovery should build a graph on the new context');
+  assert.equal(typeof FakeAudioContext.instances[1].processors[0].onaudioprocess, 'function', 'the rebuilt graph should process microphone audio');
+  assert.equal(FakeWebSocket.instances.length, 2, 'closed context recovery should continue to a new socket');
+}
+
 async function checkGestureRecoveryAfterMediaFailure() {
   const { element, FakeWebSocket, media, scheduledRetries } = createBrowserHarness();
   await element('#startBtn').dispatch('click');
@@ -249,12 +295,101 @@ async function checkVisibilityAndStopWakeLockHandling() {
   assert.equal(wakeLocks.length, 2, 'hidden or stopped conversations should not acquire a wake lock');
 }
 
+async function checkDeferredMediaCannotSurviveStop() {
+  const { element, FakeWebSocket, media, scheduledRetries } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  media.tracks[0].readyState = 'ended';
+  media.defer = true;
+  FakeWebSocket.instances[0].deliver('error');
+  scheduledRetries.shift().callback();
+  await settleAsyncWork();
+  assert.equal(media.pending.length, 1, 'recovery should be waiting for deferred media');
+
+  await element('#stopBtn').dispatch('click');
+  const staleStream = media.resolveNext();
+  await settleAsyncWork();
+  assert.equal(staleStream.getAudioTracks()[0].readyState, 'ended', 'media acquired after Stop should be stopped');
+  assert.equal(FakeWebSocket.instances.length, 1, 'media acquired after Stop should not create another socket');
+  assert.equal(element('#resumeBtn').hidden, true, 'stale success should not reveal Resume');
+  assert.equal(element('#status').textContent, 'Stopped.', 'stale success should not replace the stopped UI');
+}
+
+async function checkDeferredMediaFailureCannotSurviveStop() {
+  const { element, FakeWebSocket, media, scheduledRetries } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  media.tracks[0].readyState = 'ended';
+  media.defer = true;
+  FakeWebSocket.instances[0].deliver('error');
+  scheduledRetries.shift().callback();
+  await settleAsyncWork();
+
+  await element('#stopBtn').dispatch('click');
+  media.rejectNext(new Error('late media failure'));
+  await settleAsyncWork();
+  assert.equal(element('#resumeBtn').hidden, true, 'stale media failure should not reveal Resume');
+  assert.equal(element('#status').textContent, 'Stopped.', 'stale media failure should not replace the stopped UI');
+}
+
+async function checkDeferredResumeCannotSurviveStop() {
+  const { element, FakeWebSocket, media, scheduledRetries } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  media.tracks[0].readyState = 'ended';
+  media.error = new Error('gesture required');
+  FakeWebSocket.instances[0].deliver('error');
+  scheduledRetries.shift().callback();
+  await settleAsyncWork();
+  assert.equal(element('#resumeBtn').hidden, false, 'media failure should expose Resume before the gesture test');
+
+  media.error = undefined;
+  media.defer = true;
+  const resumeAttempt = element('#resumeBtn').dispatch('click');
+  await settleAsyncWork();
+  await element('#stopBtn').dispatch('click');
+  const staleStream = media.resolveNext();
+  await resumeAttempt;
+  await settleAsyncWork();
+  assert.equal(staleStream.getAudioTracks()[0].readyState, 'ended', 'deferred Resume media should be stopped after Stop');
+  assert.equal(FakeWebSocket.instances.length, 1, 'deferred Resume should not retry after Stop');
+  assert.equal(element('#resumeBtn').hidden, true, 'deferred Resume should not change stopped UI');
+  assert.equal(element('#status').textContent, 'Stopped.', 'deferred Resume should preserve stopped status');
+}
+
+async function checkConcurrentRecoveryKeepsOnlyNewestMedia() {
+  const { documentListeners, element, FakeWebSocket, media, scheduledRetries } = createBrowserHarness();
+  await element('#startBtn').dispatch('click');
+  await settleAsyncWork();
+  media.tracks[0].readyState = 'ended';
+  media.defer = true;
+  FakeWebSocket.instances[0].deliver('error');
+  scheduledRetries.shift().callback();
+  documentListeners.get('visibilitychange')();
+  await settleAsyncWork();
+  assert.equal(media.pending.length, 2, 'overlapping retry and visibility recovery should both be controlled');
+
+  const currentStream = media.resolveAt(1);
+  await settleAsyncWork();
+  const staleStream = media.resolveNext();
+  await settleAsyncWork();
+  assert.equal(staleStream.getAudioTracks()[0].readyState, 'ended', 'superseded media should be stopped');
+  assert.equal(currentStream.getAudioTracks()[0].readyState, 'live', 'the newest media should remain active');
+  assert.equal(FakeWebSocket.instances.length, 2, 'concurrent recovery should create only one replacement socket');
+  assert.equal(element('#resumeBtn').hidden, true, 'superseded recovery should not expose Resume');
+}
+
 Promise.all([
   checkGenerationScopedErrorRecovery(),
   checkActiveCloseRecovery(),
   checkRetryReusesLiveMedia(),
+  checkClosedContextRebuildsGraph(),
   checkGestureRecoveryAfterMediaFailure(),
   checkVisibilityAndStopWakeLockHandling(),
+  checkDeferredMediaCannotSurviveStop(),
+  checkDeferredMediaFailureCannotSurviveStop(),
+  checkDeferredResumeCannotSurviveStop(),
+  checkConcurrentRecoveryKeepsOnlyNewestMedia(),
 ])
   .then(() => console.log('browser recovery integration checks passed'))
   .catch((error) => {

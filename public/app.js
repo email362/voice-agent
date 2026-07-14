@@ -27,12 +27,33 @@ let playbackGeneration = 0;
 let browserStartupGeneration = 0;
 let socketCleanup;
 let wakeLock;
+let wakeLockOperation = 0;
+let mediaOperation = 0;
+let desiredRunning = false;
+
+const STALE_MEDIA_OPERATION = 'StaleMediaOperation';
 
 
 function setStatus(message) { statusEl.textContent = message; }
 function showResumeAction(message) {
   setStatus(message);
   resumeBtn.hidden = false;
+}
+function staleMediaOperationError() {
+  const error = new Error('Media recovery was superseded.');
+  error.name = STALE_MEDIA_OPERATION;
+  return error;
+}
+function isStaleMediaOperation(error) { return error?.name === STALE_MEDIA_OPERATION; }
+function isCurrentMediaOperation(operation) { return desiredRunning && operation === mediaOperation; }
+function requireCurrentMediaOperation(operation, acquiredStream) {
+  if (isCurrentMediaOperation(operation)) return;
+  acquiredStream?.getTracks().forEach((track) => track.stop());
+  throw staleMediaOperationError();
+}
+function invalidateMediaOperations() {
+  desiredRunning = false;
+  mediaOperation += 1;
 }
 function setMicState(state, label) {
   micIndicator.dataset.state = state;
@@ -114,19 +135,28 @@ async function requestWakeLock() {
   }
   if (document.visibilityState !== 'visible') return;
   if (wakeLock && !wakeLock.released) return;
-  wakeLock = await navigator.wakeLock.request('screen');
-  wakeLock.addEventListener('release', () => {
-    wakeLock = undefined;
+  const operation = ++wakeLockOperation;
+  const requestedWakeLock = await navigator.wakeLock.request('screen');
+  if (!desiredRunning || operation !== wakeLockOperation || document.visibilityState !== 'visible') {
+    await requestedWakeLock.release();
+    return;
+  }
+  wakeLock = requestedWakeLock;
+  requestedWakeLock.addEventListener('release', () => {
+    if (wakeLock === requestedWakeLock) wakeLock = undefined;
   }, { once: true });
 }
 
 async function releaseWakeLock() {
+  wakeLockOperation += 1;
   const activeWakeLock = wakeLock;
   wakeLock = undefined;
   await activeWakeLock?.release();
 }
 
 async function ensureMedia({ userGesture = false } = {}) {
+  const operation = ++mediaOperation;
+  requireCurrentMediaOperation(operation);
   const track = micStream?.getAudioTracks()[0];
   const hasLiveTrack = Boolean(track && track.readyState === 'live');
   if (!hasLiveTrack) {
@@ -135,14 +165,45 @@ async function ensureMedia({ userGesture = false } = {}) {
     processor = undefined;
     source = undefined;
     micStream?.getTracks().forEach((item) => item.stop());
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    let acquiredStream;
+    try {
+      acquiredStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (error) {
+      requireCurrentMediaOperation(operation);
+      throw error;
+    }
+    requireCurrentMediaOperation(operation, acquiredStream);
+    micStream = acquiredStream;
   }
-  if (!audioContext || audioContext.state === 'closed') audioContext = new AudioContext();
-  if (audioContext.state === 'suspended') await audioContext.resume();
+  if (!audioContext || audioContext.state === 'closed') {
+    processor?.disconnect();
+    source?.disconnect();
+    processor = undefined;
+    source = undefined;
+    audioContext = new AudioContext();
+  }
+  if (audioContext.state === 'suspended') {
+    try {
+      await audioContext.resume();
+    } catch (error) {
+      requireCurrentMediaOperation(operation);
+      throw error;
+    }
+    requireCurrentMediaOperation(operation);
+  }
   if (!source || !processor) connectMicGraph();
-  if (userGesture) await requestWakeLock();
+  if (userGesture) {
+    try {
+      await requestWakeLock();
+    } catch (error) {
+      requireCurrentMediaOperation(operation);
+      throw error;
+    }
+    requireCurrentMediaOperation(operation);
+  }
+  requireCurrentMediaOperation(operation);
 }
 
 function stopPlayback() {
@@ -251,11 +312,13 @@ function failTerminally(generation, description) {
   if (!lifecycle.isActiveGeneration(generation)) return;
   setStatus(description || 'An error occurred.');
   lifecycle.terminalFailure(generation);
+  invalidateMediaOperations();
   releaseWakeLock().catch((error) => logEvent({ type: 'WakeLockWarning', description: error.message }));
   releaseBrowserResources({ preserveStatus: true });
 }
 
 function handleConnectionFailure(generation, error) {
+  if (isStaleMediaOperation(error)) return;
   if (!lifecycle.isActiveGeneration(generation)) return;
   logEvent({ type: 'BrowserError', description: error.message });
   canStreamMic = false;
@@ -266,8 +329,9 @@ function handleConnectionFailure(generation, error) {
 
 async function connectConversation(generation) {
   if (!lifecycle.isActiveGeneration(generation)) return;
+  const operation = mediaOperation + 1;
   await ensureMedia();
-  if (!lifecycle.isActiveGeneration(generation)) return;
+  if (!isCurrentMediaOperation(operation) || !lifecycle.isActiveGeneration(generation)) return;
   closeActiveSocket();
   canStreamMic = false;
   setMicState('connecting', 'Mic reconnecting');
@@ -368,6 +432,7 @@ const lifecycle = createConnectionLifecycle({
 
 async function startConversation() {
   const startupGeneration = ++browserStartupGeneration;
+  desiredRunning = true;
   startBtn.disabled = true;
   stopBtn.disabled = false;
   transcriptEl.textContent = '';
@@ -378,8 +443,13 @@ async function startConversation() {
   lastAudioStatusAt = 0;
   resumeBtn.hidden = true;
   setMicState('connecting', 'Mic warming up');
+  const operation = mediaOperation + 1;
   await ensureMedia({ userGesture: true });
   if (startupGeneration !== browserStartupGeneration) {
+    releaseBrowserResources({ preserveStatus: true });
+    return;
+  }
+  if (!isCurrentMediaOperation(operation)) {
     releaseBrowserResources({ preserveStatus: true });
     return;
   }
@@ -388,6 +458,7 @@ async function startConversation() {
 
 async function stopConversation() {
   browserStartupGeneration += 1;
+  invalidateMediaOperations();
   lifecycle.stop();
   resumeBtn.hidden = true;
   try {
@@ -399,9 +470,11 @@ async function stopConversation() {
 }
 
 startBtn.addEventListener('click', () => startConversation().catch(async (error) => {
+  if (isStaleMediaOperation(error)) return;
   logEvent({ type: 'BrowserError', description: error.message });
   setStatus(error.message);
   browserStartupGeneration += 1;
+  invalidateMediaOperations();
   lifecycle.stop();
   try {
     await releaseWakeLock();
@@ -412,17 +485,32 @@ startBtn.addEventListener('click', () => startConversation().catch(async (error)
 }));
 stopBtn.addEventListener('click', () => stopConversation());
 resumeBtn.addEventListener('click', async () => {
+  const recoveryGeneration = lifecycle.snapshot().generation;
+  const operation = mediaOperation + 1;
   try {
     await ensureMedia({ userGesture: true });
+    const snapshot = lifecycle.snapshot();
+    if (!isCurrentMediaOperation(operation) || !snapshot.desiredRunning || snapshot.generation !== recoveryGeneration) return;
     resumeBtn.hidden = true;
     lifecycle.retryNow();
   } catch (error) {
+    if (isStaleMediaOperation(error) || !desiredRunning || !lifecycle.snapshot().desiredRunning) return;
     showResumeAction(error.message);
   }
 });
 window.addEventListener('online', () => lifecycle.retryNow());
-document.addEventListener('visibilitychange', () => {
+document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !lifecycle.snapshot().desiredRunning) return;
   requestWakeLock().catch((error) => logEvent({ type: 'WakeLockWarning', description: error.message }));
-  ensureMedia().then(() => lifecycle.retryNow()).catch((error) => showResumeAction(error.message));
+  const recoveryGeneration = lifecycle.snapshot().generation;
+  const operation = mediaOperation + 1;
+  try {
+    await ensureMedia();
+    const snapshot = lifecycle.snapshot();
+    if (!isCurrentMediaOperation(operation) || !snapshot.desiredRunning || snapshot.generation !== recoveryGeneration) return;
+    lifecycle.retryNow();
+  } catch (error) {
+    if (isStaleMediaOperation(error) || !desiredRunning || !lifecycle.snapshot().desiredRunning) return;
+    showResumeAction(error.message);
+  }
 });
