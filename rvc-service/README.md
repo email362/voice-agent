@@ -141,7 +141,7 @@ The Node/Fastify Deepgram app can now call this service after each assistant utt
 For one-command local development from the project root:
 
 ```bash
-npm run dev:rvc
+RVC_DEVICE=cpu npm run dev:rvc
 ```
 
 Or start RVC first:

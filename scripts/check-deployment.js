@@ -7,6 +7,8 @@ const { spawnSync } = require('node:child_process');
 
 const deploymentReadme = fs.readFileSync('deploy/README.md', 'utf8');
 const rootReadme = fs.readFileSync('README.md', 'utf8');
+const rvcReadme = fs.readFileSync('rvc-service/README.md', 'utf8');
+
 function drill(name) {
   const match = deploymentReadme.match(new RegExp(`### ${name}\\n([\\s\\S]*?)(?=\\n### |\\n## )`, 'i'));
   assert.ok(match, `missing ${name} failure drill`);
@@ -17,8 +19,8 @@ assert.match(deploymentReadme, /loginctl enable-linger/);
 assert.match(deploymentReadme, /systemctl --user enable --now voice-agent-rvc\.service voice-agent-web\.service/);
 assert.match(deploymentReadme, /journalctl --user -u voice-agent-web\.service/);
 assert.match(deploymentReadme, /curl http:\/\/127\.0\.0\.1:8787\/health/);
-assert.match(deploymentReadme, /render_dir="\$\(mktemp -d\)"/);
-assert.match(deploymentReadme, /trap 'rm -rf "\$render_dir"' EXIT/);
+assert.match(deploymentReadme, /```bash\n\(\n  render_dir="\$\(mktemp -d\)"\n  trap 'rm -rf -- "\$render_dir"' EXIT\n  deploy\/install-user-services\.sh --render-dir "\$render_dir"\n  less "\$render_dir\/voice-agent-rvc\.service"\n  less "\$render_dir\/voice-agent-web\.service"\n\)\n```/);
+assert.equal((deploymentReadme.match(/\brender_dir=/g) || []).length, 1, 'render_dir must be assigned exactly once');
 assert.doesNotMatch(deploymentReadme, /rm -rf \/tmp\/voice-agent-units/);
 assert.match(drill('Node restart'), /iPhone Safari[\s\S]*without (?:a )?tap/i);
 assert.match(drill('RVC restart'), /original audio[\s\S]*converted audio/i);
@@ -27,8 +29,12 @@ assert.match(drill('Safari background and foreground'), /wake lock[\s\S]*Tap to 
 assert.match(drill('Reboot before login'), /before (?:an )?interactive login/i);
 assert.doesNotMatch(deploymentReadme, /### Foreground recovery/);
 assert.doesNotMatch(deploymentReadme, /\.venv\/bin\/python run\.py/);
-assert.match(rootReadme, /RVC_DEVICE=cpu npm run dev:rvc/);
-assert.doesNotMatch(rootReadme, /^npm run dev:rvc$/m);
+for (const [name, readme] of [['root README', rootReadme], ['RVC README', rvcReadme]]) {
+  assert.match(readme, /RVC_DEVICE=cpu npm run dev:rvc/, `${name} must recommend the CPU one-command path`);
+  assert.doesNotMatch(readme, /^npm run dev:rvc$/m, `${name} must not recommend the CUDA-default one-command path`);
+}
+assert.equal((rvcReadme.match(/RVC_DEVICE=cuda:0/g) || []).length, 1);
+assert.match(rvcReadme, /On a different host[^\n]*RVC_DEVICE=cuda:0/);
 
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-agent-units-'));
 const render = spawnSync(process.execPath, ['deploy/render-systemd.js', '--output-dir', outputDir, '--project-root', process.cwd(), '--port', '8787'], { encoding: 'utf8' });

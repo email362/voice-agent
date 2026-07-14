@@ -31,12 +31,16 @@ Install Tailscale, authenticate this host into the intended tailnet, and verify 
 Render the units into a temporary directory without installing them or calling systemd:
 
 ```bash
-render_dir="$(mktemp -d)"
-trap 'rm -rf "$render_dir"' EXIT
-deploy/install-user-services.sh --render-dir "$render_dir"
-less "$render_dir/voice-agent-rvc.service"
-less "$render_dir/voice-agent-web.service"
+(
+  render_dir="$(mktemp -d)"
+  trap 'rm -rf -- "$render_dir"' EXIT
+  deploy/install-user-services.sh --render-dir "$render_dir"
+  less "$render_dir/voice-agent-rvc.service"
+  less "$render_dir/voice-agent-web.service"
+)
 ```
+
+The subshell confines both `render_dir` and its EXIT trap, so it does not replace an EXIT trap in the operator's interactive shell.
 
 Verify that both services bind to `127.0.0.1`, the web service uses port `8787`, and the RVC service sets `RVC_DEVICE=cpu`.
 
