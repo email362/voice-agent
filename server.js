@@ -60,7 +60,11 @@ server.on('upgrade', (request, socket, head) => {
 
 wss.on('connection', (client) => {
   if (!DEEPGRAM_API_KEY) {
-    client.send(JSON.stringify({ type: 'ProxyError', description: 'Missing DEEPGRAM_API_KEY. Copy .env.example to .env and add your key.' }));
+    client.send(JSON.stringify({
+      type: 'ProxyError',
+      description: 'Missing DEEPGRAM_API_KEY. Copy .env.example to .env and add your key.',
+      retryable: false,
+    }));
     client.close(1011, 'Missing Deepgram API key');
     return;
   }
@@ -178,7 +182,7 @@ wss.on('connection', (client) => {
 
   const endConversation = (errorMessage) => {
     discardAssistantAudioBuffer();
-    if (errorMessage) sendToClient(JSON.stringify({ type: 'ProxyError', description: errorMessage }));
+    if (errorMessage) sendToClient(JSON.stringify({ type: 'ProxyError', description: errorMessage, retryable: true }));
     if (client.readyState !== WebSocket.CLOSED) client.close(1011, errorMessage || 'Deepgram websocket error');
     if (deepgram.readyState !== WebSocket.CLOSED) deepgram.close();
   };

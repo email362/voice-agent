@@ -1,3 +1,5 @@
+import { createConnectionLifecycle } from '/connection-lifecycle.js';
+
 const SAMPLE_RATE = 24000;
 const PLAYBACK_LEAD_SECONDS = 0.08;
 const startBtn = document.querySelector('#startBtn');
@@ -16,15 +18,13 @@ let processor;
 let nextPlaybackTime = 0;
 let playbackNodes = new Set();
 let playbackQueue = Promise.resolve();
-let keepAlive;
 let canStreamMic = false;
 let outboundAudioFrames = 0;
 let outboundAudioBytes = 0;
 let lastAudioStatusAt = 0;
 let playbackGeneration = 0;
-let conversationGeneration = 0;
-let conversationHadError = false;
-let expectedSocketClose;
+let browserStartupGeneration = 0;
+let socketCleanup;
 
 
 function setStatus(message) { statusEl.textContent = message; }
@@ -170,41 +170,87 @@ function queuePlayback(arrayBuffer, generation = playbackGeneration) {
   return queued;
 }
 
-async function startConversation() {
-  const generation = ++conversationGeneration;
-  startBtn.disabled = true;
-  stopBtn.disabled = false;
-  transcriptEl.textContent = '';
-  eventsEl.textContent = '';
+function closeActiveSocket() {
+  const activeSocket = socket;
+  socketCleanup?.();
+  socketCleanup = undefined;
+  if (socket === activeSocket) socket = undefined;
+  if (activeSocket && activeSocket.readyState !== WebSocket.CLOSED && activeSocket.readyState !== WebSocket.CLOSING) activeSocket.close();
+}
+
+function releaseBrowserResources({ preserveStatus = false, statusMessage = 'Stopped.' } = {}) {
   canStreamMic = false;
-  conversationHadError = false;
-  expectedSocketClose = undefined;
-  outboundAudioFrames = 0;
-  outboundAudioBytes = 0;
-  lastAudioStatusAt = 0;
-  setMicState('connecting', 'Mic warming up');
-  await startMic();
-  if (generation !== conversationGeneration) {
-    stopPlayback();
-    processor?.disconnect();
-    source?.disconnect();
-    micStream?.getTracks().forEach((track) => track.stop());
-    audioContext?.close();
-    processor = undefined;
-    source = undefined;
-    micStream = undefined;
-    audioContext = undefined;
-    return;
-  }
+  setMicState('idle', 'Mic idle');
+  stopPlayback();
+  closeActiveSocket();
+  processor?.disconnect();
+  source?.disconnect();
+  micStream?.getTracks().forEach((track) => track.stop());
+  audioContext?.close();
+  processor = undefined;
+  source = undefined;
+  micStream = undefined;
+  audioContext = undefined;
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
+  if (!preserveStatus) setStatus(statusMessage);
+}
+
+function recoverConnection(generation, conversationSocket) {
+  if (!lifecycle.isActiveGeneration(generation) || conversationSocket !== socket) return;
+  canStreamMic = false;
+  setMicState('connecting', 'Mic reconnecting');
+  stopPlayback();
+  closeActiveSocket();
+  lifecycle.scheduleRetry(generation);
+}
+
+function failTerminally(generation, description) {
+  if (!lifecycle.isActiveGeneration(generation)) return;
+  setStatus(description || 'An error occurred.');
+  lifecycle.terminalFailure(generation);
+  releaseBrowserResources({ preserveStatus: true });
+}
+
+function handleConnectionFailure(generation, error) {
+  if (!lifecycle.isActiveGeneration(generation)) return;
+  logEvent({ type: 'BrowserError', description: error.message });
+  recoverConnection(generation, socket);
+}
+
+async function connectConversation(generation) {
+  if (!lifecycle.isActiveGeneration(generation)) return;
+  closeActiveSocket();
+  canStreamMic = false;
+  setMicState('connecting', 'Mic reconnecting');
+  let settingsApplied = false;
+  let socketKeepAlive;
+  let socketCleanedUp = false;
+  const clearSocket = () => {
+    if (socketCleanedUp) return;
+    socketCleanedUp = true;
+    clearInterval(socketKeepAlive);
+    if (socket === conversationSocket) socket = undefined;
+    if (socketCleanup === clearSocket) socketCleanup = undefined;
+  };
   const conversationSocket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/agent`);
+  conversationSocket.generation = generation;
   socket = conversationSocket;
+  socketCleanup = clearSocket;
   conversationSocket.binaryType = 'arraybuffer';
+  const isActiveSocket = () => lifecycle.isActiveGeneration(generation) && conversationSocket === socket;
   conversationSocket.addEventListener('open', () => {
-    if (conversationSocket !== socket) return;
+    if (!isActiveSocket()) {
+      clearSocket();
+      return;
+    }
     setStatus('Connected to proxy. Waiting for Deepgram welcome...');
   });
   conversationSocket.addEventListener('message', (message) => {
-    if (conversationSocket !== socket) return;
+    if (!isActiveSocket()) {
+      clearSocket();
+      return;
+    }
     if (message.data instanceof ArrayBuffer) {
       const playbackToken = playbackGeneration;
       queuePlayback(message.data, playbackToken).catch((error) => logEvent({ type: 'PlaybackError', description: error.message }));
@@ -217,54 +263,92 @@ async function startConversation() {
       return;
     }
     logEvent(event);
-    if (event.type === 'UserStartedSpeaking') {
-      stopPlayback();
-    }
+    if (event.type === 'UserStartedSpeaking') stopPlayback();
     if (event.type === 'Welcome') conversationSocket.send(JSON.stringify(buildSettings()));
     if (event.type === 'SettingsApplied') {
+      settingsApplied = true;
+      lifecycle.markLive(generation);
       canStreamMic = true;
       setMicState('live', 'Mic live');
       setStatus('Live. Speak into your microphone.');
     }
     if (event.type === 'ConversationText') addTranscript(event.role, event.content);
     if (event.type === 'Error' || event.type === 'ProxyError') {
-      conversationHadError = true;
       setStatus(event.description || 'An error occurred.');
+      if (event.retryable === false || (event.type === 'Error' && !settingsApplied)) {
+        failTerminally(generation, event.description);
+        return;
+      }
+      recoverConnection(generation, conversationSocket);
     }
   });
-  conversationSocket.addEventListener('close', () => {
-    if (conversationSocket === expectedSocketClose) {
-      expectedSocketClose = undefined;
+  conversationSocket.addEventListener('error', () => {
+    if (!isActiveSocket()) {
+      clearSocket();
       return;
     }
-    stopConversation({ closingSocket: conversationSocket, preserveStatus: conversationHadError, statusMessage: 'Disconnected.' });
+    recoverConnection(generation, conversationSocket);
   });
-  keepAlive = setInterval(() => conversationSocket.readyState === WebSocket.OPEN && conversationSocket.send(JSON.stringify({ type: 'KeepAlive' })), 8000);
+  conversationSocket.addEventListener('close', () => {
+    if (!isActiveSocket()) {
+      clearSocket();
+      return;
+    }
+    clearSocket();
+    canStreamMic = false;
+    setMicState('connecting', 'Mic reconnecting');
+    stopPlayback();
+    lifecycle.scheduleRetry(generation);
+  });
+  socketKeepAlive = setInterval(() => {
+    if (!isActiveSocket()) {
+      clearSocket();
+      return;
+    }
+    if (conversationSocket.readyState === WebSocket.OPEN) conversationSocket.send(JSON.stringify({ type: 'KeepAlive' }));
+  }, 8000);
 }
 
-function stopConversation({ closingSocket = socket, preserveStatus = false, statusMessage = 'Stopped.' } = {}) {
-  if (closingSocket && socket && closingSocket !== socket) return;
-  conversationGeneration += 1;
-  clearInterval(keepAlive);
+const lifecycle = createConnectionLifecycle({
+  connect: (generation) => {
+    connectConversation(generation).catch((error) => handleConnectionFailure(generation, error));
+  },
+  onStateChange: ({ state, retryAttempt }) => {
+    if (state === 'retry-wait') setStatus(`Disconnected. Retrying automatically (attempt ${retryAttempt})...`);
+  },
+});
+
+async function startConversation() {
+  const startupGeneration = ++browserStartupGeneration;
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  transcriptEl.textContent = '';
+  eventsEl.textContent = '';
   canStreamMic = false;
-  setMicState('idle', 'Mic idle');
-  stopPlayback();
-  const activeSocket = socket;
-  socket = undefined;
-  if (activeSocket?.readyState !== WebSocket.CLOSED) {
-    expectedSocketClose = activeSocket;
-    activeSocket.close();
-  } else if (expectedSocketClose === activeSocket) {
-    expectedSocketClose = undefined;
+  outboundAudioFrames = 0;
+  outboundAudioBytes = 0;
+  lastAudioStatusAt = 0;
+  setMicState('connecting', 'Mic warming up');
+  await startMic();
+  if (startupGeneration !== browserStartupGeneration) {
+    releaseBrowserResources({ preserveStatus: true });
+    return;
   }
-  processor?.disconnect();
-  source?.disconnect();
-  micStream?.getTracks().forEach((track) => track.stop());
-  audioContext?.close();
-  startBtn.disabled = false;
-  stopBtn.disabled = true;
-  if (!preserveStatus) setStatus(statusMessage);
+  lifecycle.start();
 }
 
-startBtn.addEventListener('click', () => startConversation().catch((error) => { logEvent({ type: 'BrowserError', description: error.message }); setStatus(error.message); stopConversation({ preserveStatus: true }); }));
+function stopConversation() {
+  browserStartupGeneration += 1;
+  lifecycle.stop();
+  releaseBrowserResources();
+}
+
+startBtn.addEventListener('click', () => startConversation().catch((error) => {
+  logEvent({ type: 'BrowserError', description: error.message });
+  setStatus(error.message);
+  browserStartupGeneration += 1;
+  lifecycle.stop();
+  releaseBrowserResources({ preserveStatus: true });
+}));
 stopBtn.addEventListener('click', () => stopConversation());
+window.addEventListener('online', () => lifecycle.retryNow());
