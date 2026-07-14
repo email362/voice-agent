@@ -5,6 +5,13 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+const deploymentReadme = fs.readFileSync('deploy/README.md', 'utf8');
+assert.match(deploymentReadme, /tailscale serve --bg http:\/\/127\.0\.0\.1:8787/);
+assert.match(deploymentReadme, /loginctl enable-linger/);
+assert.match(deploymentReadme, /systemctl --user enable --now voice-agent-rvc\.service voice-agent-web\.service/);
+assert.match(deploymentReadme, /journalctl --user -u voice-agent-web\.service/);
+assert.match(deploymentReadme, /curl http:\/\/127\.0\.0\.1:8787\/health/);
+
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-agent-units-'));
 const render = spawnSync(process.execPath, ['deploy/render-systemd.js', '--output-dir', outputDir, '--project-root', process.cwd(), '--port', '8787'], { encoding: 'utf8' });
 assert.equal(render.status, 0, render.stderr);

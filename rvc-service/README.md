@@ -22,13 +22,15 @@ export RVC_MODELS_DIR=/absolute/path/to/models
 
 ## Device Selection
 
-CUDA is the default target because this machine has a CUDA GPU:
+CPU is the deployment target for this host, which has no discrete GPU:
 
 ```bash
-export RVC_DEVICE=cuda:0
+export RVC_DEVICE=cpu
 ```
 
-If CUDA is unavailable to Torch, the service reports a CPU fallback in `GET /health`. CPU conversion is expected to be much slower and is best treated as a compatibility fallback rather than the normal path.
+Confirm `GET /health` reports both `configured_device` and `effective_device` as `cpu`. CPU conversion can be slower than GPU conversion, so validate latency with the deployed model and workload.
+
+On a different host that actually has a supported NVIDIA GPU, CUDA acceleration is optional. Install Torch and Torchaudio wheels compatible with that host's GPU driver and CUDA runtime, then explicitly set `RVC_DEVICE=cuda:0`. If CUDA is not available to Torch, the service reports its CPU fallback in `GET /health`.
 
 ## Setup
 
@@ -44,7 +46,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-For CUDA acceleration, install Torch/Torchaudio wheels compatible with your GPU and CUDA runtime. The `rvc-python` README recommends CUDA-specific Torch wheels for GPU setups; for example, adjust the CUDA wheel index/version to your local driver/runtime:
+For optional CUDA acceleration on a different GPU-equipped host, install Torch/Torchaudio wheels compatible with that host's GPU and CUDA runtime. The `rvc-python` README recommends CUDA-specific Torch wheels for GPU setups; for example, adjust the CUDA wheel index/version to that host's driver/runtime:
 
 ```bash
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -66,7 +68,7 @@ Observed in this environment: `pip install rvc-python` under Python 3.12 fails w
 ```bash
 cd rvc-service
 source .venv/bin/activate
-RVC_DEVICE=cuda:0 python run.py
+RVC_DEVICE=cpu python run.py
 ```
 
 Defaults:
@@ -77,7 +79,7 @@ Defaults:
 Override if needed:
 
 ```bash
-RVC_HOST=0.0.0.0 RVC_PORT=5055 RVC_DEVICE=cuda:0 python run.py
+RVC_HOST=0.0.0.0 RVC_PORT=5055 RVC_DEVICE=cpu python run.py
 ```
 
 ## Endpoints
@@ -127,7 +129,7 @@ These tests prove:
 
 - The exact `.pth` and `.index` files are discovered from the project root.
 - `*:Zone.Identifier` sidecars are ignored.
-- CUDA is the default configured device.
+- Device selection and CUDA-to-CPU fallback behavior are reported accurately.
 - `GET /health` reports model and backend status.
 - `POST /convert` returns a WAV response when the engine is mocked.
 - `POST /convert` returns `503` when the RVC backend is unavailable.
@@ -147,7 +149,7 @@ Or start RVC first:
 ```bash
 cd rvc-service
 source .venv/bin/activate
-RVC_DEVICE=cuda:0 python run.py
+RVC_DEVICE=cpu python run.py
 ```
 
 Then start the Deepgram app from the project root:
@@ -164,7 +166,7 @@ Service and integration environment variables:
 - `RVC_SERVICE_URL` - defaults to `http://127.0.0.1:5055`. Set empty to disable conversion.
 - `RVC_TIMEOUT_MS` - conversion timeout, default `120000`.
 - `RVC_MAX_CONVERT_UPLOAD_BYTES` - upload size cap for `/convert`, default `26214400`.
-- `RVC_DEVICE` - service device override, default `cuda:0`.
+- `RVC_DEVICE` - service device override. Set `cpu` for this deployment host; the application default when unset remains `cuda:0` for compatibility.
 - `RVC_PITCH` - pitch shift passed to `/convert`, default `0`.
 - `RVC_INDEX_RATE` - retrieval index rate, default `0.5`.
 - `RVC_F0_METHOD` - f0 method, default `rmvpe`.

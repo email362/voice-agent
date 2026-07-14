@@ -50,7 +50,7 @@ That starts the RVC service with default settings and then starts the Node app w
 ```bash
 cd rvc-service
 source .venv/bin/activate
-RVC_DEVICE=cuda:0 python run.py
+RVC_DEVICE=cpu python run.py
 ```
 
 Then start the Node app with `RVC_SERVICE_URL=http://127.0.0.1:5055`. The proxy falls back to original Deepgram audio if conversion fails or times out.
@@ -61,6 +61,7 @@ Then start the Node app with `RVC_SERVICE_URL=http://127.0.0.1:5055`. The proxy 
 - [Deepgram Voice Agent POC](./docs/architecture/deepgram-voice-agent-poc.md) - detailed architecture, setup, environment variables, RVC behavior, and POC tradeoffs.
 - [Deepgram mic audio flow plan](./docs/plans/deepgram-mic-audio-flow.md) - implementation plan for microphone streaming diagnostics and barge-in playback handling.
 - [RVC service README](./rvc-service/README.md) - service-specific setup, model discovery, and API details.
+- [Unattended CPU deployment guide](./deploy/README.md) - systemd user services, private Tailscale HTTPS, health checks, failure drills, and rollback.
 
 ## Checks
 
