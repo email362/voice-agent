@@ -19,6 +19,32 @@ const unsafeRoot = spawnSync(process.execPath, ['deploy/render-systemd.js', '--o
 assert.notEqual(unsafeRoot.status, 0);
 assert.match(unsafeRoot.stderr, /project root.*systemd-sensitive/i);
 
+const installerSandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-agent-installer-'));
+const fakeBin = path.join(installerSandbox, 'bin');
+const systemctlSentinel = path.join(installerSandbox, 'systemctl-called');
+const userConfig = path.join(installerSandbox, 'xdg');
+fs.mkdirSync(fakeBin);
+fs.writeFileSync(path.join(fakeBin, 'systemctl'), '#!/bin/sh\n: > "$SYSTEMCTL_SENTINEL"\n', { mode: 0o755 });
+const installerEnv = {
+  ...process.env,
+  PATH: `${fakeBin}:${process.env.PATH}`,
+  SYSTEMCTL_SENTINEL: systemctlSentinel,
+  XDG_CONFIG_HOME: userConfig,
+};
+const emptyRenderDir = spawnSync('deploy/install-user-services.sh', ['--render-dir', ''], { encoding: 'utf8', env: installerEnv });
+assert.notEqual(emptyRenderDir.status, 0);
+assert.match(emptyRenderDir.stderr, /--render-dir requires a non-empty value/);
+assert.equal(fs.existsSync(userConfig), false, 'empty --render-dir must not mutate the user config directory');
+assert.equal(fs.existsSync(systemctlSentinel), false, 'empty --render-dir must not invoke systemctl');
+
+const installerOutput = path.join(installerSandbox, 'rendered');
+const renderOnly = spawnSync('deploy/install-user-services.sh', ['--render-dir', installerOutput], { encoding: 'utf8', env: installerEnv });
+assert.equal(renderOnly.status, 0, renderOnly.stderr);
+assert.equal(fs.existsSync(path.join(installerOutput, 'voice-agent-web.service')), true);
+assert.equal(fs.existsSync(path.join(installerOutput, 'voice-agent-rvc.service')), true);
+assert.equal(fs.existsSync(userConfig), false, 'render-only mode must not mutate the user config directory');
+assert.equal(fs.existsSync(systemctlSentinel), false, 'render-only mode must not invoke systemctl');
+
 const listener = net.createServer();
 listener.listen(0, '127.0.0.1', () => {
   const port = listener.address().port;

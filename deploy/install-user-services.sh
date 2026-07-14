@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 PORT=8787
 RENDER_DIR=""
+RENDER_DIR_SET=false
 
 while (($#)); do
   case "$1" in
@@ -14,7 +15,9 @@ while (($#)); do
       ;;
     --render-dir)
       [[ $# -ge 2 ]] || { echo "missing value for --render-dir" >&2; exit 1; }
+      [[ -n "$2" ]] || { echo "--render-dir requires a non-empty value" >&2; exit 1; }
       RENDER_DIR="$2"
+      RENDER_DIR_SET=true
       shift 2
       ;;
     *)
@@ -24,7 +27,7 @@ while (($#)); do
   esac
 done
 
-if [[ -n "$RENDER_DIR" ]]; then
+if [[ "$RENDER_DIR_SET" == true ]]; then
   node "$ROOT_DIR/deploy/render-systemd.js" --project-root "$ROOT_DIR" --port "$PORT" --output-dir "$RENDER_DIR"
   exit 0
 fi
