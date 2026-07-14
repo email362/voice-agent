@@ -66,9 +66,7 @@ Then start the Node app with `RVC_SERVICE_URL=http://127.0.0.1:5055`. The proxy 
 ## Checks
 
 ```bash
-npm run check
-npm run check:audio-flow
-npm run check:rvc-integration
+npm run check:all
 ```
 
 This is intentionally POC-grade code. Before production use, add application-level auth, origin controls, rate limits, stronger reconnect/session handling, and production-quality browser audio processing.
