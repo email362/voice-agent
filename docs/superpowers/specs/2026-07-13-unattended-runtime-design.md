@@ -14,6 +14,7 @@ This work covers production runtime packaging and browser lifecycle recovery. In
 - After that tap, transient network and service interruptions recover automatically until the user presses Stop or reloads the page.
 - Repository changes must not install packages, enable systemd units, enable user lingering, or configure Tailscale automatically.
 - RVC remains bound to loopback and is never exposed directly through Tailscale.
+- The Linux host has no discrete GPU; production RVC runs explicitly on CPU.
 - Development continues to default to port `3000`.
 - Production defaults to loopback port `8787`, with an operator override supported through deployment configuration.
 - No new JavaScript test framework is required.
@@ -22,7 +23,7 @@ This work covers production runtime packaging and browser lifecycle recovery. In
 
 Use systemd user-service templates for process supervision, Tailscale Serve for private HTTPS termination, and a testable browser connection state machine for automatic recovery.
 
-This is preferred over Docker Compose because the application already uses a host Python environment, local model files, and GPU access. It is preferred over a shell supervisor because systemd provides boot integration, isolated restart policies, and journald logging.
+This is preferred over Docker Compose because the application already uses a host Python environment and large local model files, while CPU-only execution does not benefit from container device isolation. It is preferred over a shell supervisor because systemd provides boot integration, isolated restart policies, and journald logging.
 
 ## Deployment Architecture
 
@@ -39,6 +40,7 @@ The installation helper will support a dry-run or render-only destination so its
 
 - Run `rvc-service/.venv/bin/python run.py` from the repository.
 - Bind to `127.0.0.1:5055` by default.
+- Force `RVC_DEVICE=cpu` for production so startup does not probe or advertise unavailable CUDA hardware.
 - Load environment configuration from the repository's `.env` file.
 - Restart after unexpected exits with a bounded delay.
 - Write stdout and stderr to journald.
@@ -190,3 +192,4 @@ The work is complete when:
 - Guaranteeing browser execution while iOS has suspended or terminated the page.
 - Public internet exposure, application authentication, or multi-user authorization.
 - Containerizing Node or RVC.
+- GPU acceleration work.
