@@ -31,10 +31,11 @@ Install Tailscale, authenticate this host into the intended tailnet, and verify 
 Render the units into a temporary directory without installing them or calling systemd:
 
 ```bash
-rm -rf /tmp/voice-agent-units
-deploy/install-user-services.sh --render-dir /tmp/voice-agent-units
-less /tmp/voice-agent-units/voice-agent-rvc.service
-less /tmp/voice-agent-units/voice-agent-web.service
+render_dir="$(mktemp -d)"
+trap 'rm -rf "$render_dir"' EXIT
+deploy/install-user-services.sh --render-dir "$render_dir"
+less "$render_dir/voice-agent-rvc.service"
+less "$render_dir/voice-agent-web.service"
 ```
 
 Verify that both services bind to `127.0.0.1`, the web service uses port `8787`, and the RVC service sets `RVC_DEVICE=cpu`.
@@ -103,51 +104,56 @@ For recent non-following output, replace `-f` with `--since today`.
 
 ## 9. Failure drills
 
-Perform these drills only during a maintenance window. After each drill, repeat both local health checks and `tailscale serve status`.
+Perform these drills only during a maintenance window. Before each drill, open the private HTTPS URL in Safari on a live iPhone, start a conversation, and confirm microphone input and assistant audio work. After each drill, repeat both local health checks and `tailscale serve status`.
 
 ### Node restart
+
+While the iPhone conversation is live, restart the web service from the Linux host:
 
 ```bash
 systemctl --user restart voice-agent-web.service
 systemctl --user status voice-agent-web.service
 ```
 
+Success means iPhone Safari briefly reports the interruption, reconnects automatically without a tap, and resumes a working spoken turn without reloading the page.
+
 ### RVC restart
 
-```bash
-systemctl --user restart voice-agent-rvc.service
-systemctl --user status voice-agent-rvc.service
-```
-
-### Wi-Fi interruption
-
-Disconnect this host from Wi-Fi briefly, reconnect it, then verify both systemd units are still active, both local health endpoints respond, and Tailscale reconnects. Confirm the private HTTPS URL works from another tailnet device.
-
-### Foreground recovery
-
-If a unit repeatedly fails, stop that unit and run its command in the foreground to expose startup errors. For the web service:
-
-```bash
-systemctl --user stop voice-agent-web.service
-HOST=127.0.0.1 PORT=8787 node server.js
-# Press Ctrl+C after diagnosis, then restore managed operation:
-systemctl --user start voice-agent-web.service
-```
-
-For RVC, use the CPU deployment target:
+Stop RVC long enough to exercise degraded audio, speak a turn on the live iPhone, then start it again:
 
 ```bash
 systemctl --user stop voice-agent-rvc.service
-cd rvc-service
-RVC_HOST=127.0.0.1 RVC_PORT=5055 RVC_DEVICE=cpu .venv/bin/python run.py
-# Press Ctrl+C, return to the repository root, then restore managed operation:
-cd ..
+# Speak one turn on the iPhone while RVC is stopped.
 systemctl --user start voice-agent-rvc.service
+systemctl --user status voice-agent-rvc.service
 ```
 
-### Linux reboot
+Success means the stopped interval still plays the original audio instead of losing the response. After RVC health returns, a new spoken turn plays converted audio without restarting the Node service or reloading Safari.
 
-Reboot during a maintenance window. After the host returns, verify the units with `systemctl --user status`, repeat both local health checks, run `tailscale serve status`, and test the private HTTPS URL. The linger setting, enabled units, and background Serve configuration should restore unattended operation.
+### Wi-Fi interruption
+
+With the iPhone conversation still open, turn Wi-Fi off on the Linux host, wait until Safari shows the connection loss, then turn Wi-Fi on. Success means Tailscale returns and iPhone Safari reconnects immediately without a reload or tap; a new spoken turn must complete with assistant audio. Also confirm both systemd units remain active and both local health endpoints respond.
+
+### Safari background and foreground
+
+During a live conversation, send Safari to the iPhone background long enough for iOS to suspend audio, then foreground the same tab. Success means microphone input, assistant playback, and the screen wake lock recover automatically. If iOS requires a user gesture, Safari must show **Tap to Resume**; one tap must restore the wake lock and audio and reconnect the conversation. The page must not remain silently disconnected.
+
+### Unit diagnostics
+
+If either unit repeatedly fails, keep diagnosis under systemd so the installed unit uses the repository `.env` through its `EnvironmentFile` directive:
+
+```bash
+journalctl --user -u voice-agent-web.service --since today
+journalctl --user -u voice-agent-rvc.service --since today
+systemctl --user restart voice-agent-rvc.service voice-agent-web.service
+systemctl --user status voice-agent-rvc.service voice-agent-web.service
+```
+
+Do not substitute a hand-written foreground RVC command when diagnosing the installed service; it can omit settings loaded from `.env` and fail to reproduce the systemd environment.
+
+### Reboot before login
+
+Reboot the Linux host during a maintenance window, but do not log in locally or over SSH after it starts. From another tailnet device, wait for the private HTTPS health URL and app to return, then open the app in iPhone Safari and complete a spoken turn. Success means the web service, RVC conversion, and Tailscale HTTPS are available before an interactive login. This proves the linger setting, enabled units, and background Serve configuration restore unattended operation. Log in only after that external check if logs or local health details are needed.
 
 ## 10. Roll back
 

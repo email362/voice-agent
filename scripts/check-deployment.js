@@ -6,11 +6,29 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const deploymentReadme = fs.readFileSync('deploy/README.md', 'utf8');
+const rootReadme = fs.readFileSync('README.md', 'utf8');
+function drill(name) {
+  const match = deploymentReadme.match(new RegExp(`### ${name}\\n([\\s\\S]*?)(?=\\n### |\\n## )`, 'i'));
+  assert.ok(match, `missing ${name} failure drill`);
+  return match[1];
+}
 assert.match(deploymentReadme, /tailscale serve --bg http:\/\/127\.0\.0\.1:8787/);
 assert.match(deploymentReadme, /loginctl enable-linger/);
 assert.match(deploymentReadme, /systemctl --user enable --now voice-agent-rvc\.service voice-agent-web\.service/);
 assert.match(deploymentReadme, /journalctl --user -u voice-agent-web\.service/);
 assert.match(deploymentReadme, /curl http:\/\/127\.0\.0\.1:8787\/health/);
+assert.match(deploymentReadme, /render_dir="\$\(mktemp -d\)"/);
+assert.match(deploymentReadme, /trap 'rm -rf "\$render_dir"' EXIT/);
+assert.doesNotMatch(deploymentReadme, /rm -rf \/tmp\/voice-agent-units/);
+assert.match(drill('Node restart'), /iPhone Safari[\s\S]*without (?:a )?tap/i);
+assert.match(drill('RVC restart'), /original audio[\s\S]*converted audio/i);
+assert.match(drill('Wi-Fi interruption'), /turn Wi-Fi off[\s\S]*reconnects immediately/i);
+assert.match(drill('Safari background and foreground'), /wake lock[\s\S]*Tap to Resume/i);
+assert.match(drill('Reboot before login'), /before (?:an )?interactive login/i);
+assert.doesNotMatch(deploymentReadme, /### Foreground recovery/);
+assert.doesNotMatch(deploymentReadme, /\.venv\/bin\/python run\.py/);
+assert.match(rootReadme, /RVC_DEVICE=cpu npm run dev:rvc/);
+assert.doesNotMatch(rootReadme, /^npm run dev:rvc$/m);
 
 const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-agent-units-'));
 const render = spawnSync(process.execPath, ['deploy/render-systemd.js', '--output-dir', outputDir, '--project-root', process.cwd(), '--port', '8787'], { encoding: 'utf8' });
