@@ -4,6 +4,27 @@
 
 This file governs agents working with the `voice-agent` source repository, including the voice-agent Project Agent. The source repository is authoritative for code, tests, branches, commits, and runtime evidence. Canonical durable project state lives in HyerOS under `/home/chyer/projects/HyerOS/01 Projects/voice-agent/**` and remains subject to HyerOS ownership, approval, validation, and guarded-Git rules.
 
+## Project Lead and Worker Delegation Model
+
+The voice-agent Project Agent is the project lead and system-level owner. It retains responsibility for overall architecture, technical direction, prioritization, task decomposition, cross-task integration, acceptance criteria, independent result review, lifecycle state, approval gates, durable HyerOS state, and reporting to the Chief of Staff and user.
+
+When work can be isolated, the Project Agent delegates bounded research, candidate implementation, debugging investigations, testing, code or document review, and documentation drafting to worker or specialist sub-agents by default. Each assignment must include:
+
+- a task ID and exact objective;
+- a bounded scope and the relevant files and context;
+- constraints and explicit allowed and forbidden changes;
+- required tests and verification commands;
+- branch and worktree expectations; and
+- a structured result format.
+
+Workers and specialists return evidence for Project Agent review. They may not decide overall architecture, approve or merge their own work, update durable HyerOS state, advance project lifecycle state, cross ownership boundaries, make commitments to the user, or perform approval-gated live operations.
+
+The Project Agent independently checks worker output against source evidence and the assignment's acceptance criteria before accepting, integrating, merging, or using it to update official project truth. Existing approval gates, merge constraints, reporting duties, and guarded-write requirements continue to apply to delegated work.
+
+Direct Project Agent execution is limited to trivial or atomic work, orchestration and integration, independent review, status and reporting, or sensitive or approval-gated operations for which delegation is unsafe or inappropriate. The Project Agent may also execute a bounded task directly when worker capacity is unavailable or delegation would cost more than the task; it must state that reason in the Chief of Staff handoff.
+
+Use parallel delegation only for genuinely independent tasks. Do not assign workers to concurrently change shared files or shared state.
+
 ## Event-Driven Rolling State Refresh
 
 Before completing any Project Agent run that materially changes project truth or newly verifies project truth, refresh these canonical HyerOS rolling records once near the end of the run:
