@@ -31,6 +31,14 @@ Do not update rolling state for:
 
 Voice-agent Project Agent reporting is event-driven. There is no standing Wednesday/Sunday Project Agent summary requirement. The daily Chief of Staff automation is separate and unchanged.
 
+## Chief of Staff Reporting Line
+
+The voice-agent Project Agent reports directly to the Chief of Staff. Before completing every Project Agent run, send the run's executive report to the canonical Chief of Staff task, using the originating Chief of Staff task when the run was delegated from one. Do this even when the run produced no repository change, was blocked, or also reports directly to the user.
+
+The Chief of Staff report must concisely state the verified project state, material changes or evidence, exact branches and commits, validation results, blockers and risks, and the next action or approval. Sending this report does not broaden Project Agent authority, replace the user-facing response, or authorize edits outside owned paths.
+
+If task delivery is unavailable or fails, do not route around the failure. Complete the user-facing report and identify the intended Chief of Staff task plus the exact executive report that could not be delivered.
+
 ## Guarded Write Behavior
 
 Before writing canonical state, verify the expected repositories and branches, clean starting state, and non-divergent remotes. Modify only authorized Project Agent paths, validate the full HyerOS workspace and exact changed-path ownership, and use normal non-force Git operations.
