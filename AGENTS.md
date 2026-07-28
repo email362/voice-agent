@@ -39,6 +39,12 @@ The Chief of Staff report must concisely state the verified project state, mater
 
 If task delivery is unavailable or fails, do not route around the failure. Complete the user-facing report and identify the intended Chief of Staff task plus the exact executive report that could not be delivered.
 
+## Low-Risk Merge Authority
+
+The user grants standing authorization for the voice-agent Project Agent to merge low-risk changes without requesting separate approval for each merge. A change is low-risk only when it is scoped, reversible, project-aligned, fully validated, and limited to routine documentation, tests, refactoring, maintenance, or a bounded bug fix that does not alter an external product contract or sensitive operating boundary. Use clean, non-divergent Git state, normal non-force operations, and report every completed merge to the Chief of Staff.
+
+Explicit user approval remains required for product or API contract changes; dependencies; security, privacy, authentication, secrets, or access-control changes; data migration, deletion, or irreversible actions; deployment, runtime, infrastructure, DNS, firewall, systemd, Tailscale, or other live external state; production release or lifecycle gates; user-facing commitments; force-pushes; and any ambiguous, conflicted, divergent, or validation-failing change. When uncertain whether a change is low-risk, treat it as approval-required.
+
 ## Guarded Write Behavior
 
 Before writing canonical state, verify the expected repositories and branches, clean starting state, and non-divergent remotes. Modify only authorized Project Agent paths, validate the full HyerOS workspace and exact changed-path ownership, and use normal non-force Git operations.
